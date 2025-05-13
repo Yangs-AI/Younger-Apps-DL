@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-02-23 11:13:59
+# Last Modified time: 2025-05-13 12:27:22
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -16,7 +16,7 @@
 
 import pathlib
 
-from younger.commons.logging import set_logger, use_logger, logger
+from younger.commons.logging import set_logger, use_logger, get_logger
 
 from younger_apps_dl import __thename__
 
@@ -24,3 +24,8 @@ from younger_apps_dl import __thename__
 def equip_logger(logging_filepath: pathlib.Path | str | None = None):
     set_logger(__thename__, mode='both', level='INFO', logging_filepath=logging_filepath)
     use_logger(__thename__)
+
+
+def get_logger():
+    logger = get_logger(__thename__)
+    return logger
