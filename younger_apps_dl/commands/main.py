@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-11 17:01:37
+# Last Modified time: 2025-12-24 16:20:19
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -20,7 +20,7 @@ import tabulate
 
 from typing import Literal
 
-from younger.commons.io import load_toml, save_plain
+from younger.commons.io import load_toml, save_toml
 
 from younger_apps_dl.commons.help import generate_helping_for_pydantic_model
 
@@ -104,7 +104,7 @@ def option(task_kind, task_name, toml_path):
 
     helping_lines = generate_helping_for_pydantic_model(Task.OPTIONS)
     helping = '\n'.join(helping_lines)
-    save_plain(helping, toml_path)
+    save_toml(helping, toml_path)
 
 
 @main.command(name='launch')
