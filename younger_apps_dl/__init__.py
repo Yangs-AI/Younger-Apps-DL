@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2024-12-31 16:10:01
+# Last Modified time: 2025-12-26 01:31:25
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -23,3 +23,6 @@ __version__ = importlib.metadata.version("younger_apps_dl")
 
 
 __thename__ = YoungerHandle.AppsName + '-' + 'DL'
+
+
+# Import submodules after __thename__ is defined to avoid circular import

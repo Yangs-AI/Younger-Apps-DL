@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-12-24 16:20:19
+# Last Modified time: 2025-12-25 22:24:51
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -23,6 +23,7 @@ from typing import Literal
 from younger.commons.io import load_toml, save_toml
 
 from younger_apps_dl.commons.help import generate_helping_for_pydantic_model
+from younger_apps_dl.commons.logging import equip_logger
 
 
 @click.group(name='younger-apps-dl')
@@ -32,13 +33,18 @@ def main():
 
 @main.command(name='glance')
 @click.option('--some-type', required=True, type=click.Choice(['models', 'datasets', 'engines', 'tasks'], case_sensitive=True), help='Indicates the type of task will be used.')
-def glance(some_type: Literal['models', 'datasets', 'engines', 'tasks']):
+@click.option('--logging-filepath', required=False, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the log file; if not provided, defaults to outputting to the terminal only.')
+def glance(some_type: Literal['models', 'datasets', 'engines', 'tasks'], logging_filepath: pathlib.Path):
     """
     Displays all possible candidates under a specific `type`.
 
-    :param some_type: _description_
+    :param some_type: Indicates the type of DL component.
     :type some_type: Literal[&#39;models&#39;, &#39;datasets&#39;, &#39;engines&#39;, &#39;tasks&#39;]
+    :param logging_filepath: Path to the log file; if not provided, defaults to outputting to the terminal only.
+    :type logging_filepath: pathlib.Path
     """
+    equip_logger(logging_filepath=logging_filepath)
+
     table_name = some_type.capitalize()
     table_data = list()
     registry = dict()
@@ -84,16 +90,22 @@ def glance(some_type: Literal['models', 'datasets', 'engines', 'tasks']):
 @click.option('--task-kind', required=True, type=str, help='Indicates the type of task.')
 @click.option('--task-name', required=True, type=str, help='Indicates the name of task.')
 @click.option('--toml-path', required=True, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the configuration file.')
-def option(task_kind, task_name, toml_path):
+@click.option('--logging-filepath', required=False, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the log file; if not provided, defaults to outputting to the terminal only.')
+def option(task_kind, task_name, toml_path, logging_filepath):
     """
-    _summary_
+    Gets the configuration template for a specific task.
 
-    :param task_kind: _description_
-    :type task_kind: _type_
-    :param task_name: _description_
-    :type task_name: _type_
-    :raises exception: _description_
+    :param task_kind: Indicates the type of task.
+    :type task_kind: str
+    :param task_name: Indicates the name of task.
+    :type task_name: str
+    :raises exception: If the specified task is not found in the registry.
+    :param toml_path: Path to the configuration file.
+    :type toml_path: pathlib.Path
+    :param logging_filepath: Path to the log file; if not provided, defaults to outputting to the terminal only.
+    :type logging_filepath: pathlib.Path
     """
+    equip_logger(logging_filepath=logging_filepath)
 
     from younger_apps_dl.tasks import TASK_REGISTRY
     try:
@@ -112,20 +124,24 @@ def option(task_kind, task_name, toml_path):
 @click.option('--task-name', required=True, type=str, help='Indicates the name of task.')
 @click.option('--task-step', required=True, type=click.Choice(['train', 'evaluate', 'predict', 'preprocess', 'postprocess'], case_sensitive=True), help='Indicates the step of task.')
 @click.option('--toml-path', required=True, type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the configuration file.')
-def launch(task_kind, task_name, task_step, toml_path):
+@click.option('--logging-filepath', required=False, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the log file; if not provided, defaults to outputting to the terminal only.')
+def launch(task_kind, task_name, task_step, toml_path, logging_filepath):
     """
-    _summary_
+    Launches a specific task with given configuration.
 
-    :param task_kind: _description_
-    :type task_kind: _type_
-    :param task_name: _description_
-    :type task_name: _type_
-    :param task_step: _description_
-    :type task_step: _type_
-    :param options_filepath: _description_
-    :type options_filepath: _type_
-    :raises exception: _description_
+    :param task_kind: Indicates the type of task.
+    :type task_kind: str
+    :param task_name: Indicates the name of task.
+    :type task_name: str
+    :param task_step: Indicates the step of task.
+    :type task_step: str
+    :param toml_path: Path to the configuration file.
+    :type toml_path: pathlib.Path
+    :raises exception: If the specified task is not found in the registry.
+    :param logging_filepath: Path to the log file; if not provided, defaults to outputting to the terminal only.
+    :type logging_filepath: pathlib.Path
     """
+    equip_logger(logging_filepath=logging_filepath)
 
     from younger_apps_dl.tasks import TASK_REGISTRY
     try:

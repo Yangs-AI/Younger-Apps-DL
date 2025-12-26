@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-24 17:01:20
+# Last Modified time: 2025-12-25 22:19:32
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -30,7 +30,7 @@ from younger.commons.io import create_dir
 from younger.commons.utils import no_operation
 
 from younger_apps_dl.commons.utils import get_device_descriptor, make_reproducible, broadcast_object
-from younger_apps_dl.commons.logging import logger, equip_logger
+from younger_apps_dl.commons.logging import logger
 from younger_apps_dl.commons.checkpoint import load_checkpoint, save_checkpoint, Checkpoint
 
 from younger_apps_dl.engines import BaseEngine, register_engine

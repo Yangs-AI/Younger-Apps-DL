@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-05-12 13:20:04
+# Last Modified time: 2025-12-26 01:06:48
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -28,11 +28,12 @@ from torch_geometric.utils import is_sparse
 
 from younger.commons.io import load_json, load_pickle
 from younger.commons.utils import split_sequence
-from younger.commons.logging import logger
 
 from younger_logics_ir.modules import LogicX
 
 from younger_apps_dl.datasets import register_dataset
+
+from younger_apps_dl.commons.logging import logger
 
 
 class DAGData(Data):
