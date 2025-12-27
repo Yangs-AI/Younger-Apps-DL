@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-12-26 01:30:45
+# Last Modified time: 2025-12-27 02:47:44
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -31,7 +31,7 @@ def equip_logger(logging_filepath: pathlib.Path | str | None = None):
 
 
 def __getattr__(name: str):
-    """Dynamically get module attributes, ensuring the logger always reflects the latest configuration upon import"""
+    """Return a lazy logger without configuring handlers to avoid side effects on import."""
     if name == 'logger':
-        return get_package_logger(get_package_name())
+        return get_package_logger(get_package_name(), auto_create=False)
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
