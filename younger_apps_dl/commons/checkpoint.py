@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-01 10:40:57
+# Last Modified time: 2025-12-30 04:25:20
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -88,7 +88,7 @@ class Checkpoint(object):
 
 
 def retrieve_checkpoint_filepaths(dirpath: pathlib.Path, basename: str = 'checkpoint') -> dict[int, pathlib.Path]:
-    checkpoint_filename_pattern = re.compile(f'{basename}_Itr_(\d+)\.cp')
+    checkpoint_filename_pattern = re.compile(rf'{basename}_Itr_(\d+)\.cp')
     checkpoint_filepaths = dict()
     for path in dirpath.iterdir():
         if path.is_file():
