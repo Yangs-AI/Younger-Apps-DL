@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-08 18:28:31
+# Last Modified time: 2026-01-02 10:05:58
 # Copyright (c) 2024 - 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -16,8 +16,6 @@
 
 from abc import ABC, abstractmethod
 from typing import Literal, Type
-
-from younger.commons.logging import Logger
 
 from younger_apps_dl.commons.mixins.options import OptionsMixin, OPTIONS_TYPE
 
