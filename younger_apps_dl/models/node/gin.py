@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-01 11:16:33
+# Last Modified time: 2026-01-12 17:08:22
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -14,38 +14,46 @@
 ########################################################################
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from typing import Literal
+
+from torch import nn, mean
 from torch.nn import Embedding
+from torch.nn import functional as F
 from torch_geometric.nn import GINConv
 
+from younger_apps_dl.models import register_model
 
-class GIN_NP(nn.Module):
 
-    def __init__(self, node_dict_size, node_dim, hidden_dim, dropout, layer_number = 3, output_embedding = False):
-        super(GIN_NP, self).__init__()
-        self.output_embedding = output_embedding
-        self.node_embedding_layer = Embedding(node_dict_size, node_dim)
-        self.dropout = dropout
+@register_model("gin_node_classification")
+class GINNodeClassification(nn.Module):
+
+    def __init__(self, node_emb_size, node_emb_dim, hidden_dim, dropout_rate, layer_number = 3, stage: Literal['encode', 'classify', 'embedding'] = 'classify'):
+        super(GINNodeClassification, self).__init__()
+        self.dropout_rate = dropout_rate
+        self.stage = stage
+        self.node_embedding_layer = Embedding(node_emb_size, node_emb_dim)
 
         self.layers = nn.ModuleList()
-        self.layers.append(GIN_Conv(node_dim, hidden_dim, hidden_dim))
+        self.layers.append(GIN_Conv(node_emb_dim, hidden_dim, hidden_dim))
         for i in range(layer_number):
             self.layers.append(GIN_Conv(hidden_dim, hidden_dim, hidden_dim))
 
-        self.layers.append(GIN_Conv(hidden_dim, hidden_dim, node_dict_size))
+        self.layers.append(GIN_Conv(hidden_dim, hidden_dim, node_emb_size))
         self.initialize_parameters()
 
-    def forward(self, x, edge_index, mask_x_position):
+    def forward(self, x, edge_index, x_position = None):
         x = self.node_embedding_layer(x).squeeze(1)
         for layer in self.layers:
             x = F.dropout(x, p=self.dropout, training=self.training)
             x = layer(x, edge_index)
 
-        if self.output_embedding:
-            return torch.mean(x, dim=0).unsqueeze(0)
-        return F.log_softmax(x[mask_x_position], dim=1)
+        if self.stage == 'encode':
+            raise NotImplementedError('GINNodeClassification does not support encoding stage currently.')
+        if self.stage == 'classify':
+            x = x if x_position is None else x[x_position]
+        if self.stage == 'embedding':
+            x = mean(x, dim=0).unsqueeze(0) if x_position is None else mean(x[x_position], dim=0).unsqueeze(0)
+        return x
 
     def initialize_parameters(self):
         nn.init.normal_(self.node_embedding_layer.weight, mean=0, std=self.node_embedding_layer.embedding_dim ** -0.5)

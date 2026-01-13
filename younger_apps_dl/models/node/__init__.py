@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-01 11:28:36
+# Last Modified time: 2026-01-10 22:44:06
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -14,8 +14,9 @@
 ########################################################################
 
 
-from .ae import AE_Encoder, AE_LinearCls
-from .gcn import GCN_NP
-from .gin import GIN_NP
-from .gat import GAT_NP
-from .sage import SAGE_NP
+from .gae import GAENodeClassification
+from .gat import GATNodeClassification
+from .gcn import GCNNodeClassification
+from .gin import GINNodeClassification
+from .sage import SAGENodeClassification
+from .vgae import VGAENodeClassification
