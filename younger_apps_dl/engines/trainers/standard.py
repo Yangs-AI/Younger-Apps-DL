@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-12-25 22:19:32
+# Last Modified time: 2026-01-02 11:07:14
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -27,9 +27,7 @@ from torch.utils.data import RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 
 from younger.commons.io import create_dir
-from younger.commons.utils import no_operation
-
-from younger_apps_dl.commons.utils import get_device_descriptor, make_reproducible, broadcast_object
+from younger_apps_dl.commons.utils import get_device_descriptor, make_reproducible, broadcast_object, no_operation
 from younger_apps_dl.commons.logging import logger
 from younger_apps_dl.commons.checkpoint import load_checkpoint, save_checkpoint, Checkpoint
 
@@ -81,6 +79,11 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
     OPTIONS = StandardTrainerOptions
 
     def log(self, epoch: int, step: int, itr: int, metrics: list[tuple[str, torch.Tensor | float, Callable[[float], str]]], stage: Literal['train', 'valid']) -> None:
+        # Log the training/validation metrics.
+        # metrics: list of (metric_name, metric_value, metric_format)
+        # metric_value can be a torch.Tensor or float
+        # metric_format is a callable that formats the metric_value for logging
+        # e.g., metrics = [('loss', torch.tensor(0.1234), lambda x: f'{x:.4f}'), ('accuracy', 98.76, lambda x: f'{x:.2f}%')]
         with torch.no_grad():
             logs = list()
             for metric_name, metric_value, metric_format in metrics:
@@ -97,44 +100,49 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.LRScheduler,
         train_dataset: torch.utils.data.Dataset,
         valid_dataset: torch.utils.data.Dataset,
-        train_fn: Callable[[torch.nn.Module, Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
-        valid_fn: Callable[[torch.nn.Module, Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        train_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
         on_step_begin_fn: Callable[[int], None] = no_operation,
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
-        logging_filepath: pathlib.Path | None = None,
     ) -> None:
         """
-        _summary_
+        Run the training process.
 
-        :param model: _description_
+        :param model: The model to be trained.
         :type model: torch.nn.Module
-        :param optimizer: _description_
+        :param optimizer: The optimizer for updating model parameters.
         :type optimizer: torch.optim.Optimizer
-        :param scheduler: _description_
+        :param scheduler: The learning rate scheduler.
         :type scheduler: torch.optim.lr_scheduler.LRScheduler
-        :param train_dataset: _description_
+        :param train_dataset: The dataset used for training.
         :type train_dataset: torch.utils.data.Dataset
-        :param valid_dataset: _description_
+        :param valid_dataset: The dataset used for validation.
         :type valid_dataset: torch.utils.data.Dataset
         :param train_fn: A callable that defines how to process a `minibatch` during training, feeding it to the model and returning the computed metrics (names, values, formats). The 0th metric must be the loss to be optimized.
-        :type train_fn: Callable[[torch.nn.Module, Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]]
+        :type train_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]]
         :param valid_fn: A callable that defines how to process a `sequence` of `minibatch` during validation, feeding it to the model and returning the computed metrics (names, values, formats).
-        :type valid_fn: Callable[[torch.nn.Module, Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]]
-        :param on_step_end_fn: _description_
+        :type valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]]
+        :param initialize_fn: A callable to be executed once after model setup (device placement, DDP wrapping), receiving the ready-to-train model. Future it may also receive other parameters if needed.
+        :type initialize_fn: Callable[[torch.nn.Module], None]
+        :param on_step_begin_fn: A callable to be executed at the beginning of each step.
+        :type on_step_begin_fn: Callable[[int], None]
+        :param on_step_end_fn: A callable to be executed at the end of each step.
         :type on_step_end_fn: Callable[[int], None]
-        :param on_epoch_end_fn: _description_
+        :param on_epoch_begin_fn: A callable to be executed at the beginning of each epoch.
+        :type on_epoch_begin_fn: Callable[[int], None]
+        :param on_epoch_end_fn: A callable to be executed at the end of each epoch.
         :type on_epoch_end_fn: Callable[[int], None]
-        :param dataloader: _description_, defaults to 'pth'
-        :type dataloader: Literal[&#39;pth&#39;, &#39;pyg&#39;], optional
+        :param dataloader_type: The type of dataloader to use ('pth' for PyTorch, 'pyg' for PyTorch Geometric).
+        :type dataloader_type: Literal[&#39;pth&#39;, &#39;pyg&#39;], optional
         """
 
         start_from_epoch: int = 0
         start_from_step: int = 0
         start_from_itr: int = 0
-        equip_logger(logging_filepath)
         if self.options.resume_filepath is None:
             logger.info(f'-> Train from scratch.')
         else:
@@ -192,12 +200,12 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 model, optimizer, scheduler,
                 train_dataset, valid_dataset,
                 train_fn, valid_fn,
+                initialize_fn,
                 on_step_begin_fn,
                 on_step_end_fn,
                 on_epoch_begin_fn,
                 on_epoch_end_fn,
                 dataloader_type,
-                logging_filepath,
             ), nprocs=node_number, join=True)
         else:
             self.solo_train(
@@ -205,12 +213,12 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 model, optimizer, scheduler,
                 train_dataset, valid_dataset,
                 train_fn, valid_fn,
+                initialize_fn,
                 on_step_begin_fn,
                 on_step_end_fn,
                 on_epoch_begin_fn,
                 on_epoch_end_fn,
                 dataloader_type,
-                logging_filepath,
             )
         toc = time.time()
         logger.info(f'-> All Done! Overall Time Cost = {toc-tic:.2f}s')
@@ -221,16 +229,15 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.LRScheduler,
         train_dataset: torch.utils.data.Dataset,
         valid_dataset: torch.utils.data.Dataset,
-        train_fn: Callable[[torch.nn.Module, Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
-        valid_fn: Callable[[torch.nn.Module, Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        train_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
         on_step_begin_fn: Callable[[int], None] = no_operation,
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
-        logging_filepath: pathlib.Path | None = None,
     ) -> None:
-        equip_logger(logging_filepath)
 
         make_reproducible(self.options.seed)
         torch.autograd.set_detect_anomaly(True)
@@ -248,7 +255,11 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
             logger.disabled = True
 
         distributed.init_process_group('nccl', rank=rank, world_size=self.options.node_number)
+        # You may need to set `find_unused_parameters=True` for models with conditional computation paths or want to find unused parameters.
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank], find_unused_parameters=False)
+
+        # Notify that model is ready (after device placement and DDP wrapping)
+        initialize_fn(model)
 
         train_sampler = DistributedSampler(train_dataset, rank=rank, num_replicas=self.options.node_number, seed=self.options.seed, shuffle=self.options.shuffle, drop_last=True)
 
@@ -286,9 +297,12 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
 
                 itr = itr + 1
 
-                metrics = train_fn(model, minibatch)
                 # Delegate backward to `train_fn` for cases like 1 forward + N backward.
-                # metrics[0][1].backward()
+                # `train_fn` should take care of gradient scaling if needed.
+                # metrics[0][1] is assumed to be the loss to be optimized.
+                # e.g., metrics[0][1].backward() inside `train_fn`.
+                # Thus here the returned `metrics` are expected to have been detached from the computation graph.
+                metrics = train_fn(minibatch)
 
                 # Update Model Parameters
                 if itr % self.options.update_period == 0:
@@ -307,7 +321,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                         model.eval()
                         stic = time.time()
                         with torch.no_grad():
-                            metrics = valid_fn(model, valid_dataloader)
+                            metrics = valid_fn(valid_dataloader)
                         stoc = time.time()
                         self.log(epoch, step, itr, metrics, 'train')
                         model.train()
@@ -315,6 +329,8 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
 
                         logger.info(f'-> Saving ...')
                         stic = time.time()
+                        # Metrics Here are from Validation
+                        # Thus all metrics are detached from computation graph.
                         checkpoint = Checkpoint(epoch, step, itr, model.module.state_dict(), optimizer.state_dict(), scheduler.state_dict(), dict(((metric[0], metric[1]) for metric in metrics)))
                         save_checkpoint(checkpoint, self.options.checkpoint_savepath, self.options.checkpoint_basename, self.options.checkpoint_keepdisk)
                         stoc = time.time()
@@ -353,22 +369,25 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.LRScheduler,
         train_dataset: torch.utils.data.Dataset,
         valid_dataset: torch.utils.data.Dataset,
-        train_fn: Callable[[torch.nn.Module, Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
-        valid_fn: Callable[[torch.nn.Module, Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        train_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
         on_step_begin_fn: Callable[[int], None] = no_operation,
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
-        logging_filepath: pathlib.Path | None = None,
     ) -> None:
-        equip_logger(logging_filepath)
 
         make_reproducible(self.options.seed)
         torch.autograd.set_detect_anomaly(True)
 
         device_descriptor = get_device_descriptor('GPU', 0)
         model.to(device=device_descriptor)
+        logger.info(f'-> Using Device: \'{device_descriptor}\'')
+
+        # Notify that model is ready (after device placement)
+        initialize_fn(model)
 
         train_sampler = RandomSampler(train_dataset) if self.options.shuffle else None
         if dataloader_type == 'pth':
@@ -403,9 +422,12 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
 
                 itr = itr + 1
 
-                metrics = train_fn(model, minibatch)
                 # Delegate backward to `train_fn` for cases like 1 forward + N backward.
-                # metrics[0][1].backward()
+                # `train_fn` should take care of gradient scaling if needed.
+                # metrics[0][1] is assumed to be the loss to be optimized.
+                # e.g., metrics[0][1].backward() inside `train_fn`.
+                # Thus here the returned `metrics` are expected to have been detached from the computation graph.
+                metrics = train_fn(minibatch)
 
                 # Update Model Parameters
                 if itr % self.options.update_period == 0:
@@ -423,7 +445,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                     model.eval()
                     stic = time.time()
                     with torch.no_grad():
-                        metrics = valid_fn(model, valid_dataloader)
+                        metrics = valid_fn(valid_dataloader)
                     stoc = time.time()
                     self.log(epoch, step, itr, metrics, 'train')
                     model.train()
@@ -431,6 +453,8 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
 
                     logger.info(f'-> Saving checkpoint ...')
                     stic = time.time()
+                    # Metrics Here are from Validation
+                    # Thus all metrics are detached from computation graph.
                     checkpoint = Checkpoint(epoch, step, itr, model.state_dict(), optimizer.state_dict(), scheduler.state_dict(), dict(((metric[0], metric[1]) for metric in metrics)))
                     save_checkpoint(checkpoint, self.options.checkpoint_savepath, self.options.checkpoint_basename, self.options.checkpoint_keepdisk)
                     stoc = time.time()
