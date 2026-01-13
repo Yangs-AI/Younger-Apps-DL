@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-13 19:21:49
+# Last Modified time: 2026-01-06 03:33:26
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -19,15 +19,13 @@ import numpy
 import torch.nn as nn
 import torch.nn.functional as F
 
-from pydantic import BaseModel, Field
-
 from torch.nn import Embedding
 from torch_geometric.nn import GINConv
 
 from younger_apps_dl.models import register_model
 
 
-@register_model('maegin')
+@register_model('maegin_embedding')
 class MAEGIN(nn.Module):
     def __init__(self, node_emb_size, node_emb_dim, hidden_dim, dropout_rate, layer_number):
         super(MAEGIN, self).__init__()
@@ -43,15 +41,18 @@ class MAEGIN(nn.Module):
 
 
 class MAEGINEncoder(nn.Module):
-    def __init__(self, node_dict_size, node_dim, hidden_dim, dropout_rate, layer_number = 3):
+    def __init__(self, node_emb_size, node_emb_dim, hidden_dim, dropout_rate, layer_number = 3):
         super(MAEGINEncoder, self).__init__()
         self.dropout_rate = dropout_rate
 
-        self.node_embedding_layer = Embedding(node_dict_size, node_dim)
-
+        self.node_embedding_layer = Embedding(node_emb_size, node_emb_dim)
         self.layers = nn.ModuleList()
 
-        dims = numpy.linspace(node_dim, hidden_dim, 1 + layer_number + 1 + 1, endpoint=True, dtype=int)
+        # Define dimensions for each layer
+        # If layer_number = 3, and node_emb_dim=64, hidden_dim=256
+        # dims = [64, 128, 192, 256, 256]
+        # Thus, one should ensure that the difference between hidden_dim and node_emb_dim is divisible by layer_number
+        dims = numpy.linspace(node_emb_dim, hidden_dim, 1 + layer_number + 1 + 1, endpoint=True, dtype=int)
 
         self.layers.append(MAEGINConv(dims[0], dims[0], dims[1]))
         for i in range(1, 1 + layer_number):
@@ -68,12 +69,12 @@ class MAEGINEncoder(nn.Module):
 
 
 class MAEGINDecoder(nn.Module):
-    def __init__(self, node_dict_size, hidden_dim):
+    def __init__(self, node_emb_size, hidden_dim):
         super(MAEGINDecoder, self).__init__()
         self.gnn = GINConv(nn.Sequential(nn.Identity()))
-        middle_dim = hidden_dim + int((node_dict_size - hidden_dim) / 2)
+        middle_dim = hidden_dim + int((node_emb_size - hidden_dim) / 2)
         self.trn = nn.Linear(hidden_dim, middle_dim)
-        self.prd = nn.Linear(middle_dim, node_dict_size)
+        self.prd = nn.Linear(middle_dim, node_emb_size)
 
     def forward(self, x, edge_index):
         x = self.gnn(x, edge_index)
