@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-08 21:29:13
+# Last Modified time: 2026-01-02 11:31:18
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -21,8 +21,8 @@ import pathlib
 from typing import Any, Literal, Callable
 from pydantic import BaseModel, Field
 
-from younger_apps_dl.commons.utils import get_device_descriptor
-from younger_apps_dl.commons.logging import equip_logger, logger
+from younger_apps_dl.commons.utils import get_device_descriptor, no_operation
+from younger_apps_dl.commons.logging import logger
 from younger_apps_dl.commons.checkpoint import load_checkpoint
 
 from younger_apps_dl.engines import BaseEngine, register_engine
@@ -31,6 +31,9 @@ from younger_apps_dl.engines import BaseEngine, register_engine
 class StandardEvaluatorOptions(BaseModel):
     # Checkpoint Options
     checkpoint_filepath: pathlib.Path  = Field(..., description='Path to load checkpoint.')
+
+    # Device Options
+    device_type: Literal['CPU', 'GPU'] = Field('GPU', description='Device type for model evaluation. Use CUDA_VISIBLE_DEVICES environment variable to control GPU selection.')
 
     # Iteration Options
     batch_size: int = Field(32, ge=1, description='Batch size for validation.')
@@ -50,15 +53,26 @@ class StandardEvaluator(BaseEngine[StandardEvaluatorOptions]):
         self,
         model: torch.nn.Module,
         dataset: torch.utils.data.Dataset,
-        evaluate_fn: Callable[[torch.nn.Module, Any], tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]],
+        evaluate_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]],
+        initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
-        logging_filepath: pathlib.Path | None = None,
     ) -> None:
-        equip_logger(logging_filepath)
-        checkpoint = load_checkpoint(self.options.checkpoint_filepath)
+        """
+        Run the evaluation process.
+        
+        :param model: The model to be evaluated.
+        :type model: torch.nn.Module
+        :param dataset: The dataset used for evaluation.
+        :type dataset: torch.utils.data.Dataset
+        :param evaluate_fn: The function to evaluate the model.
+        :type evaluate_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]]
+        :param initialize_fn: The function to initialize the model before evaluation. Future it may also recieve other parameters if needed.
+        :type initialize_fn: Callable[[torch.nn.Module], None]
+        :param dataloader_type: The type of dataloader to use ('pth' for PyTorch, 'pyg' for PyTorch Geometric).
+        :type dataloader_type: Literal[&#39pth&#39, &#39pyg&#39]
+        """
 
-        device_descriptor = get_device_descriptor('GPU', 0)
-        model.to(device=device_descriptor)
+        checkpoint = load_checkpoint(self.options.checkpoint_filepath)
 
         logger.info(f'-> Checkpoint from [Epoch/Step/Itr]@[{checkpoint.epoch}/{checkpoint.step}/{checkpoint.itr}].')
 
@@ -70,6 +84,7 @@ class StandardEvaluator(BaseEngine[StandardEvaluatorOptions]):
             model,
             dataset,
             evaluate_fn,
+            initialize_fn,
             dataloader_type
         )
 
@@ -77,9 +92,16 @@ class StandardEvaluator(BaseEngine[StandardEvaluatorOptions]):
         self,
         model: torch.nn.Module,
         dataset: torch.utils.data.Dataset,
-        evaluate_fn: Callable[[torch.nn.Module, Any], tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]],
+        evaluate_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]],
+        initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
+        device_descriptor = get_device_descriptor(self.options.device_type, 0)
+        model.to(device=device_descriptor)
+        logger.info(f'-> Using Device: {device_descriptor}')
+
+        initialize_fn(model)
+
         if dataloader_type == 'pth':
             from torch.utils.data import DataLoader
         if dataloader_type == 'pyg':
@@ -93,10 +115,9 @@ class StandardEvaluator(BaseEngine[StandardEvaluatorOptions]):
         tic = time.time()
         model.eval()
         with torch.no_grad():
-            metric_names, metric_values, metric_formats = evaluate_fn(model, dataloader)
+            metric_names, metric_values, metric_formats = evaluate_fn(dataloader)
             self.log(metric_names, metric_values, metric_formats)
 
         toc = time.time()
 
         logger.info(f'-> Finished. Overall Time Cost = {toc-tic:.2f}s)')
-
