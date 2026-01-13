@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-24 16:46:17
+# Last Modified time: 2026-01-13 10:12:38
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -19,6 +19,34 @@ import numpy
 import random
 
 from typing import Any, Literal, Iterable
+
+
+def split_sequence(sequence: list, chunk_count: int) -> list[list]:
+    """
+    Split a sequence into multiple chunks as evenly as possible.
+
+    :param sequence: The input sequence to be split.
+    :param chunk_count: The number of chunks to split into.
+    :return: A list of chunks (sublists).
+
+    Example:
+        >>> split_sequence([1, 2, 3, 4, 5], 2)
+        [[1, 2, 3], [4, 5]]
+        >>> split_sequence([1, 2, 3, 4, 5, 6], 3)
+        [[1, 2], [3, 4], [5, 6]]
+    """
+
+    assert 0 < chunk_count and chunk_count <= len(sequence), "chunk_count must be in the range (0, len(sequence)]"
+
+    q, r = divmod(len(sequence), chunk_count)
+
+    chunks = list()
+    start = 0
+    for i in range(chunk_count):
+        end = start + q + (1 if i < r else 0)
+        chunks.append(sequence[start:end])
+        start = end
+    return chunks
 
 
 def shuffle_sequence(sequence: Iterable) -> Iterable:
@@ -80,6 +108,20 @@ def average_model_state_dict(model_state_dicts: list[dict], weights: list[float]
 
 
 def broadcast_object(value: Any, src: int = 0) -> bool:
+    # Broadcast a picklable object to all processes in the distributed group.
+    # Only the source process (src) provides the object, others receive it.
     object_list = [value] if torch.distributed.get_rank() == src else [None]
     torch.distributed.broadcast_object_list(object_list, src=src)
     return object_list[0]
+
+
+def no_operation(*args, **kwargs) -> None:
+    return None
+
+
+def gradient_computation_switch(module: torch.nn.Module, switch: bool):
+    """
+    Utility method to set requires_grad for all parameters in a module.
+    """
+    for parameter in module.parameters():
+        parameter.requires_grad = switch
