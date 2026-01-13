@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-12-26 01:06:48
+# Last Modified time: 2026-01-12 17:43:39
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -17,7 +17,6 @@
 import os
 import tqdm
 import torch
-import pathlib
 import multiprocessing
 
 from typing import Any, Callable, Literal
@@ -27,12 +26,12 @@ from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr, GlobalStorag
 from torch_geometric.utils import is_sparse
 
 from younger.commons.io import load_json, load_pickle
-from younger.commons.utils import split_sequence
 
 from younger_logics_ir.modules import LogicX
 
 from younger_apps_dl.datasets import register_dataset
 
+from younger_apps_dl.commons.utils import split_sequence
 from younger_apps_dl.commons.logging import logger
 
 
@@ -107,7 +106,7 @@ class DAGDataset(Dataset):
         raw_filename: str,
         processed_dirpath: str,
         processed_filename: str,
-        name: str = 'YLDL-G2N',
+        name: str = 'YADL-DAG',
         split: Literal['train', 'valid', 'test'] = 'train',
         worker_number: int = 4,
 
@@ -119,7 +118,9 @@ class DAGDataset(Dataset):
         force_reload: bool = False,
     ):
         # The class will not use `root`.
-        # The `self.download()` will not be implemented, the function is delivered to preprocessors.
+        # The `self.download()` will not be implemented.
+        # This dataset assumes that the raw files are already present in `raw_dirpath`.
+        # All data with LogicX format will be processed into DAGData and saved in `processed_dirpath`.
 
         self.meta_filepath = meta_filepath
         self.raw_dirpath = raw_dirpath
@@ -167,7 +168,6 @@ class DAGDataset(Dataset):
         hashs = sorted(meta['item_names'])
         return hashs
 
-
     def _process_chunk_(self, parameter: tuple[list[str], int]) -> list[DAGData]:
         sdags_chunk, worker_index = parameter
         dag_datas_chunk = list()
@@ -198,11 +198,12 @@ class DAGDataset(Dataset):
         logicx: LogicX,
         dicts: dict[Literal['i2t', 't2i'], dict[int, str] | dict[str, int]],
     ) -> DAGData:
-        nxids = sorted(list(logicx.dag.nodes))
-        pgids = list(range(logicx.dag.number_of_nodes()))
+        nxids = sorted(list(logicx.dag.nodes)) # NetworkX IDs
+        pgids = list(range(logicx.dag.number_of_nodes())) # PyGeometric IDs
         nxid2pgid = dict(zip(nxids, pgids))
-        # >>> print(list(sorted(logicx.dag.nodes)))
         # [B, A, C, D]
+        # >>> print(list(sorted(logicx.dag.nodes)))
+        # [A, B, C, D]
         # >>> print(nxid2pgid)
         # {A: 0, B: 1, C: 2, D: 3}
 
@@ -220,6 +221,7 @@ class DAGDataset(Dataset):
         # Shape: [#Node, 1]
 
         # ID in DAG
+        # NX Node ID sorted by PG Node ID
         node_indices_in_dag: list[str] = sorted(list(logicx.dag.nodes), key=lambda x: nxid2pgid[x])
 
         # ID in Dict
