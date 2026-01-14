@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-11 17:06:48
+# Last Modified time: 2026-01-14 09:19:14
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -80,7 +80,7 @@ def get_placeholder(data_type: type | None):
     return f'<{getattr(data_type, "__name__", "sepcial")}>'
 
 
-def generate_helping_for_pydantic_model(pydantic_model: Type[BaseModel], location: str = '') -> str:
+def generate_helping_for_pydantic_model(pydantic_model: Type[BaseModel], location: str = '') -> list[str]:
     toml_lines = list()
     nested_fields = list()
     global_fields = list()

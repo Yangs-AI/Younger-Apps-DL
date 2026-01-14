@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-12-25 22:24:51
+# Last Modified time: 2026-01-14 09:42:33
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -20,7 +20,7 @@ import tabulate
 
 from typing import Literal
 
-from younger.commons.io import load_toml, save_toml
+from younger.commons.io import load_toml
 
 from younger_apps_dl.commons.help import generate_helping_for_pydantic_model
 from younger_apps_dl.commons.logging import equip_logger
@@ -91,7 +91,7 @@ def glance(some_type: Literal['models', 'datasets', 'engines', 'tasks'], logging
 @click.option('--task-name', required=True, type=str, help='Indicates the name of task.')
 @click.option('--toml-path', required=True, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the configuration file.')
 @click.option('--logging-filepath', required=False, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the log file; if not provided, defaults to outputting to the terminal only.')
-def option(task_kind, task_name, toml_path, logging_filepath):
+def option(task_kind: str, task_name: str, toml_path: pathlib.Path, logging_filepath: pathlib.Path):
     """
     Gets the configuration template for a specific task.
 
@@ -116,7 +116,8 @@ def option(task_kind, task_name, toml_path, logging_filepath):
 
     helping_lines = generate_helping_for_pydantic_model(Task.OPTIONS)
     helping = '\n'.join(helping_lines)
-    save_toml(helping, toml_path)
+    toml_path.write_text(helping, encoding='utf-8')
+    click.echo(f'Configuration template for "<{task_kind}> -> <{task_name}>" task has been written to the file - "{toml_path.absolute()}".')
 
 
 @main.command(name='launch')
@@ -125,7 +126,7 @@ def option(task_kind, task_name, toml_path, logging_filepath):
 @click.option('--task-step', required=True, type=click.Choice(['train', 'evaluate', 'predict', 'preprocess', 'postprocess'], case_sensitive=True), help='Indicates the step of task.')
 @click.option('--toml-path', required=True, type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the configuration file.')
 @click.option('--logging-filepath', required=False, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the log file; if not provided, defaults to outputting to the terminal only.')
-def launch(task_kind, task_name, task_step, toml_path, logging_filepath):
+def launch(task_kind: str, task_name: str, task_step: str, toml_path: pathlib.Path, logging_filepath: pathlib.Path):
     """
     Launches a specific task with given configuration.
 
