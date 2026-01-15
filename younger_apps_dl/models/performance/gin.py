@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-15 23:57:14
+# Last Modified time: 2026-01-16 00:49:26
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -31,6 +31,7 @@ class GINPerformancePrediction(nn.Module):
         node_emb_dim: int,
         hidden_dim: int,
         readout_dim: int,
+        output_dim: int,
         dropout_rate: float,
     ):
         super(GINPerformancePrediction, self).__init__()
@@ -73,9 +74,9 @@ class GINPerformancePrediction(nn.Module):
             dropout=0.5
         )
 
-        # Now Try Regression
+        # Regression output layer - supports multi-label prediction
         self.reg_output_layer = MLP(
-            channel_list=[readout_dim, 1],
+            channel_list=[readout_dim, output_dim],
             act=None,
             norm=None,
         )
@@ -109,7 +110,7 @@ class GINPerformancePrediction(nn.Module):
         # x - [ batch_size X readout_dim ]
 
         reg_output = self.reg_output_layer(x)
-        # reg_output - [ batch_size X 1 ]
+        # reg_output - [ batch_size X output_dim ]
 
         return reg_output
 

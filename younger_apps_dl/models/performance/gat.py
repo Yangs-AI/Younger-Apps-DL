@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-16 00:08:50
+# Last Modified time: 2026-01-16 00:49:39
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -32,6 +32,7 @@ class GATPerformancePrediction(nn.Module):
         hidden_dim: int,
         head_number: int,
         readout_dim: int,
+        output_dim: int,
         dropout_rate: float,
     ):
         super(GATPerformancePrediction, self).__init__()
@@ -57,7 +58,8 @@ class GATPerformancePrediction(nn.Module):
             dropout=0.5
         )
 
-        self.reg_output_layer = Linear(readout_dim, 1)
+        # Regression output layer - supports multi-label prediction
+        self.reg_output_layer = Linear(readout_dim, output_dim)
 
         self.initialize_parameters()
 
@@ -89,7 +91,7 @@ class GATPerformancePrediction(nn.Module):
         # x - [ batch_size X readout_dim ]
 
         reg_output = self.reg_output_layer(x)
-        # reg_output - [ batch_size X 1 ]
+        # reg_output - [ batch_size X output_dim ]
 
         return reg_output
 
