@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-15 02:09:17
+# Last Modified time: 2026-01-16 01:05:36
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -19,25 +19,26 @@ import torch
 import numpy
 import pathlib
 
-from typing import Literal, Callable
+from typing import overload, Literal, Callable
 from pydantic import BaseModel, Field
 from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score, top_k_accuracy_score
 from younger.commons.io import create_dir
 
 from younger_apps_dl.tasks import BaseTask, register_task
 from younger_apps_dl.engines import StandardPreprocessor, StandardPreprocessorOptions, StandardTrainer, StandardTrainerOptions, StandardEvaluator, StandardEvaluatorOptions, StandardPredictor, StandardPredictorOptions
-from younger_apps_dl.datasets import DAGDataset, DAGData
-from younger_apps_dl.models import MAEGIN
-from younger_apps_dl.commons.graph import dag_node_masking
+from younger_apps_dl.datasets import DAGWithLabelsDataset, DAGData
+from younger_apps_dl.models import GATPerformancePrediction, GINPerformancePrediction
 from younger_apps_dl.commons.logging import logger
 
 
 class ModelOptions(BaseModel):
-    model_type: Literal['MAEGIN'] = Field('MAEGIN', description='The identifier of the model type, e.g., \'MAEGIN\', etc.')
+    model_type: Literal['GIN', 'GAT'] = Field('GIN', description='The identifier of the model type, e.g., \'GIN\', etc.')
     node_emb_dim: int = Field(512, description='Node embedding dimensionality.')
     hidden_dim: int = Field(256, description='Hidden layer dimensionality within the model.')
+    head_number: int = Field(4, description='Number of attention heads (applicable for GAT model).')
+    readout_dim: int = Field(256, description='Dimensionality of the readout layer.')
+    output_dim: int = Field(1, description='Number of output labels to predict (e.g., 1 for single metric, N for multiple metrics). It should be the same as the number of label keys specified in the dataset options.')
     dropout_rate: float = Field(0.5, description='Dropout probability used for regularization.')
-    layer_number: int = Field(3, description='Number of layers (e.g., message-passing rounds for GNNs).')
 
 
 class OptimizerOptions(BaseModel):
@@ -62,23 +63,11 @@ class DatasetOptions(BaseModel):
     processed_filename: str = Field(..., description='Filename of the processed dataset.')
     worker_number: int = Field(4, description='Number of workers for parallel data loading or processing.')
 
+    label_keys: list[str] = Field(..., description='List of keys identifying the labels to be predicted. (e.g., [\'download\', \'accuracy\'])')
 
-class BasicGenerationOptions(BaseModel):
+
+class BasicPerformancePredictionOptions(BaseModel):
     # Main Options
-    mask_ratio: float = Field(..., description='Ratio of nodes to mask during training for self-supervised learning (0.0 to 1.0).')
-    mask_method: Literal['Random', 'Purpose'] = Field(..., description='Node masking strategy: \'Random\' masks any node uniformly; \'Purpose\' only masks leaf nodes. It is recommended to use \'Purpose\' for DAGs with scheduled sampling.')
-    mask_mode: Literal['BERT', 'PURE'] = Field('BERT', description='Masking mode: \'BERT\' for training with BERT-style masking; \'PURE\' for pure masking without random/no-change strategies.')
-
-    scheduled_sampling_enable: bool = Field(False, description='Whether to enable scheduled sampling during training.')
-    scheduled_sampling_level: int = Field(5, description='Number of hierarchical levels for scheduled sampling.')
-    scheduled_sampling_mode: Literal['Sigmoid', 'Smooth'] = Field('Smooth', description='Mode of scheduled sampling probability increase over time.')
-    scheduled_sampling_prob: float = Field(0.5, description='Probability of scheduled sampling at each level (0.0 to 1.0).')
-    scheduled_sampling_fix: bool = Field(False, description='If True, use a fixed scheduled sampling probability throughout training; if False, increase over time.')
-    scheduled_sampling_mu: float = Field(1000.0, description='Controls the rate of increase in scheduled sampling probability over training epoch.')
-    scheduled_sampling_k: float = Field(1.0, description='Steepness parameter for the sigmoid function controlling scheduled sampling probability.')
-    scheduled_sampling_supervise: bool = Field(False, description='If True, provide supervision for sampled nodes during scheduled sampling; if False, do not supervise sampled nodes.')
-
-    generation_initial_level: int = Field(0, ge=0, description='Number of initial levels (L) to use as ground truth in autoregressive generation. Nodes in levels 0 to L-1 are kept unchanged; levels L and beyond are masked and predicted.')
 
     trainer: StandardTrainerOptions
     evaluator: StandardEvaluatorOptions
@@ -94,214 +83,274 @@ class BasicGenerationOptions(BaseModel):
     optimizer: OptimizerOptions
     scheduler: SchedulerOptions
 
+
 # Self-Supervised Learning for Node Prediction
-@register_task('ir', 'basic_generation')
-class BasicGeneration(BaseTask[BasicGenerationOptions]):
+@register_task('ir', 'basic_performance_prediction')
+class BasicPerformancePrediction(BaseTask[BasicPerformancePredictionOptions]):
     """
-    Basic Generation Task for Directed Acyclic Graphs (DAGs) using self-supervised learning.
+    Basic Performance Prediction Task for Directed Acyclic Graphs (DAGs) using supervised learning.
     Implements a BERT-style masked node prediction framework with optional scheduled sampling.
     The model learns to predict masked nodes based on their context within the graph structure.
     It is a foundational task for various IR applications such as code generation, dag generation, etc.
     The task only supports one-step generation during training and validation stage, and generate full DAG based on several first level nodes and the topological structure during testing.
     One can copy and modify this class to implement more advanced generation tasks as needed.
     """
-    OPTIONS = BasicGenerationOptions
+    OPTIONS = BasicPerformancePredictionOptions
 
-import torch
-import torch.utils.data
+    def train(self):
+        assert self.options.model.output_dim == len(self.options.train_dataset.label_keys), f"Model output_dim ({self.options.model.output_dim}) must match the number of label keys ({len(self.options.train_dataset.label_keys)}) in the training dataset."
 
-from typing import Any, Callable
-from collections import OrderedDict
-from torch_geometric.data import Batch, Data
-
-from younger.datasets.modules import Instance, Network
-from younger.datasets.utils.translation import get_complete_attributes_of_node
-
-from younger.applications.models import NAPPGATVaryV1
-from younger.applications.datasets import ArchitectureDataset
-from younger.applications.tasks.base_task import YoungerTask
-
-
-def infer_cluster_num(dataset: ArchitectureDataset) -> int:
-    total_node_num = 0
-    for data in dataset:
-        total_node_num += data.num_nodes
-    return int(total_node_num / len(dataset))
-
-
-class PerformancePrediction(YoungerTask):
-    def __init__(self, custom_config: dict, device_descriptor: torch.device) -> None:
-        super().__init__(custom_config, device_descriptor)
-        self.build_config(custom_config)
-        self.build()
-
-    def build_config(self, custom_config: dict):
-        # Dataset
-        dataset_config = dict()
-        custom_dataset_config = custom_config.get('dataset', dict())
-        dataset_config['train_dataset_dirpath'] = custom_dataset_config.get('train_dataset_dirpath', None)
-        dataset_config['valid_dataset_dirpath'] = custom_dataset_config.get('valid_dataset_dirpath', None)
-        dataset_config['test_dataset_dirpath'] = custom_dataset_config.get('test_dataset_dirpath', None)
-        dataset_config['metric_feature_get_type'] = custom_dataset_config.get('metric_feature_get_type', 'mean') # 'none','mean','rand'
-        dataset_config['worker_number'] = custom_dataset_config.get('worker_number', 4) 
-        dataset_config['node_dict_size'] = custom_dataset_config.get('node_dict_size', None) 
-        dataset_config['task_dict_size'] = custom_dataset_config.get('task_dict_size', None) 
-
-        # Model
-        model_config = dict()
-        custom_model_config = custom_config.get('model', dict())
-        model_config['node_dim'] = custom_model_config.get('node_dim', 512)
-        model_config['task_dim'] = custom_model_config.get('task_dim', 512)
-        model_config['hidden_dim'] = custom_model_config.get('hidden_dim', 512)
-        model_config['readout_dim'] = custom_model_config.get('readout_dim', 256)
-        model_config['cluster_num'] = custom_model_config.get('cluster_num', None)
-
-        # Optimizer
-        optimizer_config = dict()
-        custom_optimizer_config = custom_config.get('optimizer', dict())
-        optimizer_config['learning_rate'] = custom_optimizer_config.get('learning_rate', 1e-3)
-        optimizer_config['weight_decay'] = custom_optimizer_config.get('weight_decay', 1e-1)
-
-        # API
-        api_config = dict()
-        custom_api_config = custom_config.get('api', dict())
-        api_config['meta_filepath'] = custom_api_config.get('meta_filepath', None)
-        api_config['onnx_model_dirpath'] = custom_api_config.get('onnx_model_dirpath', list())
-
-        config = dict()
-        config['dataset'] = dataset_config
-        config['model'] = model_config
-        config['optimizer'] = optimizer_config
-        config['api'] = api_config
-        self.config = config
-
-    def build(self):
-        if self.config['dataset']['train_dataset_dirpath']:
-            self.train_dataset = ArchitectureDataset(
-                self.config['dataset']['train_dataset_dirpath'],
-                task_dict_size=self.config['dataset']['task_dict_size'],
-                node_dict_size=self.config['dataset']['node_dict_size'],
-                metric_feature_get_type=self.config['dataset']['metric_feature_get_type'],
-                worker_number=self.config['dataset']['worker_number']
-            )
-        else:
-            self.train_dataset = None
-        if self.config['dataset']['valid_dataset_dirpath']:
-            self.valid_dataset = ArchitectureDataset(
-                self.config['dataset']['valid_dataset_dirpath'],
-                task_dict_size=self.config['dataset']['task_dict_size'],
-                node_dict_size=self.config['dataset']['node_dict_size'],
-                metric_feature_get_type=self.config['dataset']['metric_feature_get_type'],
-                worker_number=self.config['dataset']['worker_number']
-            )
-        else:
-            self.valid_dataset = None
-        if self.config['dataset']['test_dataset_dirpath']:
-            self.test_dataset = ArchitectureDataset(
-                self.config['dataset']['test_dataset_dirpath'],
-                task_dict_size=self.config['dataset']['task_dict_size'],
-                node_dict_size=self.config['dataset']['node_dict_size'],
-                metric_feature_get_type=self.config['dataset']['metric_feature_get_type'],
-                worker_number=self.config['dataset']['worker_number']
-            )
-        else:
-            self.test_dataset = None
-
-        if self.train_dataset:
-            self.logger.info(f'-> Nodes Dict Size: {len(self.train_dataset.x_dict["n2i"])}')
-            self.logger.info(f'-> Tasks Dict Size: {len(self.train_dataset.y_dict["t2i"])}')
-
-        if self.config['model']['cluster_num'] is None:
-            self.config['model']['cluster_num'] = infer_cluster_num(self.train_dataset)
-            self.logger.info(f'Cluster Number Not Specified! Infered Number: {self.config["model"]["cluster_num"]}')
-        else:
-            self.logger.info(f'-> Cluster Number: {self.config["model"]["cluster_num"]}')
-
-        self.model = NAPPGATVaryV1(
-            node_dict=self.train_dataset.x_dict['n2i'],
-            task_dict=self.train_dataset.y_dict['t2i'],
-            node_dim=self.config['model']['node_dim'],
-            task_dim=self.config['model']['task_dim'],
-            hidden_dim=self.config['model']['hidden_dim'],
-            readout_dim=self.config['model']['readout_dim'],
-            cluster_num=self.config['model']['cluster_num'],
+        self.train_dataset = self._build_dataset_(
+            self.options.train_dataset.meta_filepath,
+            self.options.train_dataset.raw_dirpath,
+            self.options.train_dataset.raw_filename,
+            self.options.train_dataset.processed_dirpath,
+            self.options.train_dataset.processed_filename,
+            'train',
+            self.options.train_dataset.worker_number,
+            label_keys=self.options.train_dataset.label_keys,
         )
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config['optimizer']['learning_rate'], weight_decay=self.config['optimizer']['weight_decay'])
+        self.valid_dataset = self._build_dataset_(
+            self.options.valid_dataset.meta_filepath,
+            self.options.valid_dataset.raw_dirpath,
+            self.options.valid_dataset.raw_filename,
+            self.options.valid_dataset.processed_dirpath,
+            self.options.valid_dataset.processed_filename,
+            'valid',
+            self.options.valid_dataset.worker_number,
+            label_keys=self.options.valid_dataset.label_keys,
+        )
+        self.model = self._build_model_(
+            self.options.model.model_type,
+            len(self.train_dataset.dicts['i2t']),
+            self.options.model.node_emb_dim,
+            self.options.model.hidden_dim,
+            self.options.model.head_number,
+            self.options.model.readout_dim,
+            self.options.model.output_dim,
+            self.options.model.dropout_rate,
+        )
+        self.optimizer = self._build_optimizer_(
+            self.model,
+            self.options.optimizer.lr,
+            self.options.optimizer.eps,
+            self.options.optimizer.weight_decay,
+            self.options.optimizer.amsgrad,
+        )
+        self.scheduler = self._build_scheduler_(
+            self.optimizer,
+            self.options.scheduler.step_size,
+            self.options.scheduler.gamma,
+        )
+        self.dicts = self.train_dataset.dicts
 
-    def train(self, minibatch: Any) -> tuple[torch.Tensor, OrderedDict[str, tuple[torch.Tensor, Callable | None]]]:
+        trainer = StandardTrainer(self.options.trainer)
+        trainer.run(
+            self.model,
+            self.optimizer,
+            self.scheduler,
+            self.train_dataset,
+            self.valid_dataset,
+            self._train_fn_,
+            self._valid_fn_,
+            initialize_fn=self._initialize_fn_,
+            dataloader_type='pyg',
+        )
+
+    def evaluate(self):
+        self.test_dataset = self._build_dataset_(
+            self.options.test_dataset.meta_filepath,
+            self.options.test_dataset.raw_dirpath,
+            self.options.test_dataset.raw_filename,
+            self.options.test_dataset.processed_dirpath,
+            self.options.test_dataset.processed_filename,
+            'test',
+            self.options.test_dataset.worker_number,
+            self.options.test_dataset.label_keys,
+        )
+        self.model = self._build_model_(
+            self.options.model.model_type,
+            len(self.train_dataset.dicts['i2t']),
+            self.options.model.node_emb_dim,
+            self.options.model.hidden_dim,
+            self.options.model.head_number,
+            self.options.model.readout_dim,
+            self.options.model.output_dim,
+            self.options.model.dropout_rate,
+        )
+        self.dicts = self.test_dataset.dicts
+        evaluator = StandardEvaluator(self.options.evaluator)
+        evaluator.run(
+            self.model,
+            self.test_dataset,
+            self._test_fn_,
+            initialize_fn=self._initialize_fn_,
+            dataloader_type='pyg'
+        )
+
+    @overload
+    def _build_model_(
+        self,
+        model_type: Literal["GAT"],
+        node_emb_size: int,
+        node_emb_dim: int,
+        hidden_dim: int,
+        head_number: int,
+        readout_dim: int,
+        output_dim: int,
+        dropout_rate: float = 0.5,
+    ) -> GATPerformancePrediction: ...
+
+    @overload
+    def _build_model_(
+        self,
+        model_type: Literal["GIN"],
+        node_emb_size: int,
+        node_emb_dim: int,
+        hidden_dim: int,
+        head_number: int,
+        readout_dim: int,
+        output_dim: int,
+        dropout_rate: float = 0.5,
+    ) -> GINPerformancePrediction: ...
+
+    def _build_model_(self,
+        model_type: Literal['GAT', 'GIN'],
+        node_emb_size: int,
+        node_emb_dim: int,
+        hidden_dim: int,
+        head_number: int,
+        readout_dim: int,
+        output_dim: int,
+        dropout_rate: float = 0.5,
+    ) -> GATPerformancePrediction | GINPerformancePrediction:
+        if model_type == 'GAT':
+            model = GATPerformancePrediction(
+                node_emb_size,
+                node_emb_dim,
+                hidden_dim,
+                head_number,
+                readout_dim,
+                output_dim,
+                dropout_rate
+            )
+        if model_type == 'GIN':
+            model = GINPerformancePrediction(
+                node_emb_size,
+                node_emb_dim,
+                hidden_dim,
+                readout_dim,
+                output_dim,
+                dropout_rate
+            )
+        return model
+
+    def _build_dataset_(self, meta_filepath: pathlib.Path, raw_dirpath: pathlib.Path, raw_filename: str, processed_dirpath: pathlib.Path, processed_filename: str, split: Literal['train', 'valid', 'test'], worker_number: int, label_keys: list[str]) -> DAGWithLabelsDataset:
+        dataset = DAGWithLabelsDataset(
+            meta_filepath,
+            raw_dirpath,
+            raw_filename,
+            processed_dirpath,
+            processed_filename,
+            split=split,
+            worker_number=worker_number,
+            label_keys=label_keys,
+        )
+        return dataset
+
+    def _build_optimizer_(
+        self,
+        model: torch.nn.Module,
+        lr: float,
+        eps: float,
+        weight_decay: float,
+        amsgrad: bool
+    ) -> torch.optim.Optimizer:
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr, eps=eps, weight_decay=weight_decay, amsgrad=amsgrad)
+        return optimizer
+
+    def _build_scheduler_(
+        self,
+        optimizer: torch.optim.Optimizer,
+        step_size: int,
+        gamma: float,
+    ) -> torch.optim.lr_scheduler.LRScheduler:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size, gamma=gamma)
+        return scheduler
+
+    def _initialize_fn_(self, model: GATPerformancePrediction | GINPerformancePrediction) -> None:
+        self.model = model
+        self.device_descriptor = next(self.model.parameters()).device
+
+    def _train_fn_(self, minibatch: DAGData) -> tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]:
         minibatch = minibatch.to(self.device_descriptor)
-        y = minibatch.y.reshape(len(minibatch), -1)
-        tasks = y[:, 0].long()
-        metrics = y[:, 1]
-        outputs, global_pooling_loss = self.model(minibatch.x[:, 0], minibatch.edge_index, minibatch.batch, tasks)
-        main_loss = torch.nn.functional.mse_loss(outputs.reshape(-1), metrics)
-        loss = main_loss + global_pooling_loss
-        logs = OrderedDict({
-            'Total-Loss': (loss, lambda x: f'{x:.4f}'),
-            'REG-Loss (MSE)': (main_loss, lambda x: f'{x:.4f}'),
-            'Cluster-loss': (global_pooling_loss, lambda x: f'{x:.4f}'),
-        })
-        return loss, logs
+        goldens = minibatch.y.reshape(len(minibatch), -1)
+        # goldens: [batch_size, output_dim] where output_dim == len(label_keys)
 
-    def eval(self, minibatch: Any) -> tuple[torch.Tensor, torch.Tensor]:
-        # Return Output & Golden
-        minibatch = minibatch.to(self.device_descriptor)
-        y = minibatch.y.reshape(len(minibatch), -1)
-        tasks = y[:, 0].long()
-        metrics = y[:, 1]
-        outputs, _ = self.model(minibatch.x[:, 0], minibatch.edge_index, minibatch.batch, tasks)
-        return outputs.reshape(-1), metrics
+        outputs = self.model(minibatch.x, minibatch.edge_index, minibatch.batch)
 
-    def eval_calculate_logs(self, all_outputs: list[torch.Tensor], all_goldens: list[torch.Tensor]) -> OrderedDict[str, tuple[torch.Tensor, Callable | None]]:
-        all_outputs = torch.stack(all_outputs).reshape(-1)
-        all_goldens = torch.stack(all_goldens).reshape(-1)
-        mae = torch.nn.functional.l1_loss(all_outputs, all_goldens, reduction='mean')
-        mse = torch.nn.functional.mse_loss(all_outputs, all_goldens, reduction='mean')
-        rmse = torch.sqrt(mse)
-        logs = OrderedDict({
-            'MAE': (mae, lambda x: f'{x:.4f}'),
-            'MSE': (mse, lambda x: f'{x:.4f}'),
-            'RMSE': (rmse, lambda x: f'{x:.4f}'),
-        })
-        return logs
+        return self._compute_metrics_(outputs, goldens)
 
-    def api(self, **kwargs):
-        meta_filepath = self.config['api']['meta_filepath']
-        onnx_model_dirpath = self.config['api']['onnx_model_dirpath']
-        assert meta_filepath, f'No Meta File.'
-        assert onnx_model_dirpath, f'No ONNX Dir.'
-
-        self.logger.info(f'  v Loading Meta ...')
-        meta = ArchitectureDataset.load_meta(meta_filepath)
-        x_dict = ArchitectureDataset.get_x_dict(meta, node_dict_size=self.config['dataset']['node_dict_size'])
-        y_dict = ArchitectureDataset.get_y_dict(meta, task_dict_size=self.config['dataset']['task_dict_size'])
-        self.logger.info(f'    -> Tasks Dict Size: {len(x_dict)}')
-        self.logger.info(f'    -> Nodes Dict Size: {len(y_dict)}')
-        self.logger.info(f'  ^ Built.')
-
-        self.logger.info(f'  v Loading ONNX Models')
-        datas = list()
-        onnx_model_filenames = list()
-        for onnx_model_filepath in onnx_model_dirpath.iterdir():
-            onnx_model_filenames.append(onnx_model_filepath.name)
-            instance = Instance(onnx_model_filepath)
-            standardized_graph = Network.standardize(instance.network.graph)
-            for node_index in standardized_graph.nodes():
-                operator = standardized_graph.nodes[node_index]['features']['operator']
-                attributes = standardized_graph.nodes[node_index]['features']['attributes']
-                standardized_graph.nodes[node_index]['features']['attributes'] = get_complete_attributes_of_node(attributes, operator['op_type'], operator['domain'], meta['max_inclusive_version'])
-            standardized_graph.graph.clear()
-            data = ArchitectureDataset.get_data(standardized_graph, x_dict, y_dict, feature_get_type='none')
-            datas.append(data)
-        minibatch = Batch.from_data_list(datas)
-        self.logger.info(f'  ^ Loaded. Total - {len(datas)}.')
-
-        self.model.eval()
-        self.logger.info(f'  -> Interact Test Begin ...')
+    def _valid_fn_(self, dataloader: torch.utils.data.DataLoader) -> tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]:
+        outputs = list()
+        goldens = list()
 
         with torch.no_grad():
-            minibatch: Data = minibatch.to(self.device_descriptor)
-            output, _ = self.model(minibatch.x, minibatch.edge_index, minibatch.batch)
+            with tqdm.tqdm(total=len(dataloader)) as progress_bar:
+                for index, minibatch in enumerate(dataloader, start=1):
+                    minibatch: DAGData = minibatch.to(self.device_descriptor)
+                    golden = minibatch.y.reshape(len(minibatch), -1)
+                    # golden: [batch_size, output_dim] where output_dim == len(label_keys)
+                    output = self.model(minibatch.x, minibatch.edge_index, minibatch.batch)
 
-            for onnx_model_filename, output_value in zip(onnx_model_filenames, output):
-                self.logger.info(f'  -> Result - {onnx_model_filename}: {output_value}')
+                    outputs.append(output)
+                    goldens.append(golden)
+                    progress_bar.update(1)
+
+        outputs = torch.cat(outputs)
+        goldens = torch.cat(goldens)
+
+        return self._compute_metrics_(outputs, goldens)
+
+    def _test_fn_(self, dataloader: torch.utils.data.DataLoader) -> tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]:
+        return self._valid_fn_(dataloader)
+
+    def _compute_metrics_(
+        self,
+        pred: torch.Tensor,
+        gold: torch.Tensor,
+        logger_prefix: str = ''
+    ) -> tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]:
+        """
+        Compute evaluation metrics for regression.
+
+        Args:
+            pred: Model predictions [batch_size] or [batch_size, output_dim]
+            gold: Ground truth values [batch_size] or [batch_size, output_dim]
+            logger_prefix: Prefix for logging output - optional
+
+        Returns:
+            (metric_names, metric_values, metric_formats)
+        """
+
+        if len(logger_prefix) != 0:
+            logger.info(f'{logger_prefix}')
+
+        # Reshape to ensure consistent dimensions
+        pred = pred.reshape(-1, pred.shape[-1] if pred.dim() > 1 else 1)
+        gold = gold.reshape(-1, gold.shape[-1] if gold.dim() > 1 else 1)
+
+        # Compute regression metrics
+        mae = torch.nn.functional.l1_loss(pred, gold, reduction='mean')
+        mse = torch.nn.functional.mse_loss(pred, gold, reduction='mean')
+        rmse = torch.sqrt(mse)
+
+        metrics = [
+            ('MAE', mae.item(), lambda x: f'{x:.4f}'),
+            ('MSE', mse.item(), lambda x: f'{x:.4f}'),
+            ('RMSE', rmse.item(), lambda x: f'{x:.4f}'),
+        ]
+
+        # Unpack tuples: (name, value, format) -> three separate lists
+        metric_names_list, metric_values_list, metric_formats_list = zip(*metrics)
+        return list(metric_names_list), list(metric_values_list), list(metric_formats_list)
