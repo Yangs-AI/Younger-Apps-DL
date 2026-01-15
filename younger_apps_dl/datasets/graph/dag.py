@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-12 17:43:39
+# Last Modified time: 2026-01-14 21:21:29
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -140,6 +140,16 @@ class DAGDataset(Dataset):
 
         logger.info('Loading Processed File')
         self.all_dag_data: list[DAGData] = torch.load(self.processed_path)
+        logger.info(f'Loaded {len(self.all_dag_data)} samples for split="{self.split}".')
+
+    @property
+    def arguments(self) -> dict[str, Any]:
+        """
+        This method returns a dictionary of arguments used for processing DAG data: `self.__class__.process_dag_data(dag, **self.arguments)`.
+        """
+        return {
+            'dicts': self.dicts,
+        }
 
     @classmethod
     def load_meta(cls, meta_filepath: str) -> dict[str, Any]:
@@ -174,7 +184,7 @@ class DAGDataset(Dataset):
         with tqdm.tqdm(total=len(sdags_chunk), desc=f"Processing: Worker PID - {os.getpid()}", position=worker_index) as progress_bar:
             for sdag in sdags_chunk:
                 dag = LogicX.loads_dag(sdag)
-                dag_data = self.__class__.process_dag_data(dag, self.dicts)
+                dag_data = self.__class__.process_dag_data(dag, **self.arguments)
                 dag_datas_chunk.append(dag_data)
                 progress_bar.update(1)
         return dag_datas_chunk
@@ -196,8 +206,13 @@ class DAGDataset(Dataset):
     def process_dag_data(
         cls,
         logicx: LogicX,
-        dicts: dict[Literal['i2t', 't2i'], dict[int, str] | dict[str, int]],
+        **arguments,
     ) -> DAGData:
+        """
+        This method processes a LogicX DAG into a DAGData object.
+        Key 'dicts' must contained in arguments: dict[Literal['i2t', 't2i'], dict[int, str] | dict[str, int]]
+
+        """
         nxids = sorted(list(logicx.dag.nodes)) # NetworkX IDs
         pgids = list(range(logicx.dag.number_of_nodes())) # PyGeometric IDs
         nxid2pgid = dict(zip(nxids, pgids))
@@ -207,7 +222,7 @@ class DAGDataset(Dataset):
         # >>> print(nxid2pgid)
         # {A: 0, B: 1, C: 2, D: 3}
 
-        x = cls.process_dag_x(logicx, dicts, nxid2pgid)
+        x = cls.process_dag_x(logicx, arguments['dicts'], nxid2pgid)
         edge_index = cls.process_dag_edge_index(logicx, nxid2pgid)
         if logicx.dag.graph['level']:
             level = cls.process_dag_level(logicx, nxid2pgid)

@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-13 17:12:41
+# Last Modified time: 2026-01-14 21:20:05
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -677,7 +677,7 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
             logicx.load(logicx_filepath)
             dag_hashes.append(LogicX.hash(logicx))
 
-            data = DAGDataset.process_dag_data(logicx, self.dicts)
+            data = DAGDataset.process_dag_data(logicx, {'dicts': self.dicts})
             loader = NeighborLoader(
                 data,
                 num_neighbors=[-1] * len(self.model.encoder.layers),
