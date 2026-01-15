@@ -6,13 +6,106 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-04-01 10:23:16
+# Last Modified time: 2026-01-15 02:09:17
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
 # LICENSE file in the root directory of this source tree.
 ########################################################################
 
+
+import tqdm
+import torch
+import numpy
+import pathlib
+
+from typing import Literal, Callable
+from pydantic import BaseModel, Field
+from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score, top_k_accuracy_score
+from younger.commons.io import create_dir
+
+from younger_apps_dl.tasks import BaseTask, register_task
+from younger_apps_dl.engines import StandardPreprocessor, StandardPreprocessorOptions, StandardTrainer, StandardTrainerOptions, StandardEvaluator, StandardEvaluatorOptions, StandardPredictor, StandardPredictorOptions
+from younger_apps_dl.datasets import DAGDataset, DAGData
+from younger_apps_dl.models import MAEGIN
+from younger_apps_dl.commons.graph import dag_node_masking
+from younger_apps_dl.commons.logging import logger
+
+
+class ModelOptions(BaseModel):
+    model_type: Literal['MAEGIN'] = Field('MAEGIN', description='The identifier of the model type, e.g., \'MAEGIN\', etc.')
+    node_emb_dim: int = Field(512, description='Node embedding dimensionality.')
+    hidden_dim: int = Field(256, description='Hidden layer dimensionality within the model.')
+    dropout_rate: float = Field(0.5, description='Dropout probability used for regularization.')
+    layer_number: int = Field(3, description='Number of layers (e.g., message-passing rounds for GNNs).')
+
+
+class OptimizerOptions(BaseModel):
+    lr: float = Field(0.001, description='Learning rate used by the optimizer.')
+    eps: float = Field(1e-8, description='Epsilon for numerical stability.')
+    weight_decay: float = Field(0.01, description='L2 regularization (weight decay) coefficient.')
+    amsgrad: bool = Field(False, description='Whether to use the AMSGrad variant of the Adam optimizer.')
+
+
+class SchedulerOptions(BaseModel):
+    start_factor: float = Field(0.1, description='Initial learning rate multiplier for warm-up.')
+    warmup_steps: int = Field(1500, description='Number of warm-up steps at the start of training.')
+    total_steps: int = Field(150000, description='Total number of training steps for the scheduler to plan the learning rate schedule.')
+    last_step: int = Field(-1, description='The last step index when resuming training. Use -1 to start fresh.')
+
+
+class DatasetOptions(BaseModel):
+    meta_filepath: pathlib.Path = Field(..., description='Path to the metadata file that describes the dataset.')
+    raw_dirpath: pathlib.Path = Field(..., description='Directory containing raw input data files.')
+    raw_filename: str = Field(..., description='Filename of the raw input data.')
+    processed_dirpath: pathlib.Path = Field(..., description='Directory where processed dataset should be stored.')
+    processed_filename: str = Field(..., description='Filename of the processed dataset.')
+    worker_number: int = Field(4, description='Number of workers for parallel data loading or processing.')
+
+
+class BasicGenerationOptions(BaseModel):
+    # Main Options
+    mask_ratio: float = Field(..., description='Ratio of nodes to mask during training for self-supervised learning (0.0 to 1.0).')
+    mask_method: Literal['Random', 'Purpose'] = Field(..., description='Node masking strategy: \'Random\' masks any node uniformly; \'Purpose\' only masks leaf nodes. It is recommended to use \'Purpose\' for DAGs with scheduled sampling.')
+    mask_mode: Literal['BERT', 'PURE'] = Field('BERT', description='Masking mode: \'BERT\' for training with BERT-style masking; \'PURE\' for pure masking without random/no-change strategies.')
+
+    scheduled_sampling_enable: bool = Field(False, description='Whether to enable scheduled sampling during training.')
+    scheduled_sampling_level: int = Field(5, description='Number of hierarchical levels for scheduled sampling.')
+    scheduled_sampling_mode: Literal['Sigmoid', 'Smooth'] = Field('Smooth', description='Mode of scheduled sampling probability increase over time.')
+    scheduled_sampling_prob: float = Field(0.5, description='Probability of scheduled sampling at each level (0.0 to 1.0).')
+    scheduled_sampling_fix: bool = Field(False, description='If True, use a fixed scheduled sampling probability throughout training; if False, increase over time.')
+    scheduled_sampling_mu: float = Field(1000.0, description='Controls the rate of increase in scheduled sampling probability over training epoch.')
+    scheduled_sampling_k: float = Field(1.0, description='Steepness parameter for the sigmoid function controlling scheduled sampling probability.')
+    scheduled_sampling_supervise: bool = Field(False, description='If True, provide supervision for sampled nodes during scheduled sampling; if False, do not supervise sampled nodes.')
+
+    generation_initial_level: int = Field(0, ge=0, description='Number of initial levels (L) to use as ground truth in autoregressive generation. Nodes in levels 0 to L-1 are kept unchanged; levels L and beyond are masked and predicted.')
+
+    trainer: StandardTrainerOptions
+    evaluator: StandardEvaluatorOptions
+    preprocessor: StandardPreprocessorOptions
+    predictor: StandardPredictorOptions
+
+    train_dataset: DatasetOptions
+    valid_dataset: DatasetOptions
+    test_dataset: DatasetOptions
+    predict_dataset: DatasetOptions
+
+    model: ModelOptions
+    optimizer: OptimizerOptions
+    scheduler: SchedulerOptions
+
+# Self-Supervised Learning for Node Prediction
+@register_task('ir', 'basic_generation')
+class BasicGeneration(BaseTask[BasicGenerationOptions]):
+    """
+    Basic Generation Task for Directed Acyclic Graphs (DAGs) using self-supervised learning.
+    Implements a BERT-style masked node prediction framework with optional scheduled sampling.
+    The model learns to predict masked nodes based on their context within the graph structure.
+    It is a foundational task for various IR applications such as code generation, dag generation, etc.
+    The task only supports one-step generation during training and validation stage, and generate full DAG based on several first level nodes and the topological structure during testing.
+    One can copy and modify this class to implement more advanced generation tasks as needed.
+    """
+    OPTIONS = BasicGenerationOptions
 
 import torch
 import torch.utils.data
