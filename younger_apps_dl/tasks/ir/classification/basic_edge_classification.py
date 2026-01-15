@@ -137,6 +137,34 @@ class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
             dataloader_type='pyg',
         )
 
+    def evaluate(self):
+        self.test_dataset = self._build_dataset_(
+            self.options.test_dataset.meta_filepath,
+            self.options.test_dataset.raw_dirpath,
+            self.options.test_dataset.raw_filename,
+            self.options.test_dataset.processed_dirpath,
+            self.options.test_dataset.processed_filename,
+            'test',
+            self.options.test_dataset.worker_number,
+        )
+        self.model = self._build_model_(
+            self.options.model.model_type,
+            len(self.train_dataset.dicts['i2t']),
+            self.options.model.node_emb_dim,
+            self.options.model.hidden_dim,
+            self.options.model.output_dim,
+            self.options.model.dropout_rate,
+        )
+        self.dicts = self.test_dataset.dicts
+        evaluator = StandardEvaluator(self.options.evaluator)
+        evaluator.run(
+            self.model,
+            self.test_dataset,
+            self._test_fn_,
+            initialize_fn=self._initialize_fn_,
+            dataloader_type='pyg'
+        )
+
     @overload
     def _build_model_(
         self,
