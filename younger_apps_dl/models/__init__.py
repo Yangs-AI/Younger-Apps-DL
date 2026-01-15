@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-10 22:45:35
+# Last Modified time: 2026-01-15 23:56:52
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -32,3 +32,4 @@ def register_model(name: str):
 from .node import *
 from .edge import *
 from .embedding import *
+from .performance import *
