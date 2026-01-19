@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-16 01:05:36
+# Last Modified time: 2026-01-16 11:51:31
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -16,13 +16,10 @@
 
 import tqdm
 import torch
-import numpy
 import pathlib
 
 from typing import overload, Literal, Callable
 from pydantic import BaseModel, Field
-from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score, top_k_accuracy_score
-from younger.commons.io import create_dir
 
 from younger_apps_dl.tasks import BaseTask, register_task
 from younger_apps_dl.engines import StandardPreprocessor, StandardPreprocessorOptions, StandardTrainer, StandardTrainerOptions, StandardEvaluator, StandardEvaluatorOptions, StandardPredictor, StandardPredictorOptions
@@ -50,8 +47,8 @@ class OptimizerOptions(BaseModel):
 
 class SchedulerOptions(BaseModel):
     start_factor: float = Field(0.1, description='Initial learning rate multiplier for warm-up.')
-    warmup_steps: int = Field(1500, description='Number of warm-up steps at the start of training.')
-    total_steps: int = Field(150000, description='Total number of training steps for the scheduler to plan the learning rate schedule.')
+    warmup_steps: int = Field(500, description='Number of warm-up steps at the start of training using linear learning rate scaling.')
+    total_steps: int = Field(60000, description='Total number of training steps for cosine annealing decay after warmup.')
     last_step: int = Field(-1, description='The last step index when resuming training. Use -1 to start fresh.')
 
 
@@ -97,6 +94,10 @@ class BasicPerformancePrediction(BaseTask[BasicPerformancePredictionOptions]):
     """
     OPTIONS = BasicPerformancePredictionOptions
 
+    def preprocess(self):
+        preprocessor = StandardPreprocessor(self.options.preprocessor)
+        preprocessor.run()
+
     def train(self):
         assert self.options.model.output_dim == len(self.options.train_dataset.label_keys), f"Model output_dim ({self.options.model.output_dim}) must match the number of label keys ({len(self.options.train_dataset.label_keys)}) in the training dataset."
 
@@ -139,8 +140,10 @@ class BasicPerformancePrediction(BaseTask[BasicPerformancePredictionOptions]):
         )
         self.scheduler = self._build_scheduler_(
             self.optimizer,
-            self.options.scheduler.step_size,
-            self.options.scheduler.gamma,
+            self.options.scheduler.start_factor,
+            self.options.scheduler.warmup_steps,
+            self.options.scheduler.total_steps,
+            self.options.scheduler.last_step,
         )
         self.dicts = self.train_dataset.dicts
 
@@ -272,10 +275,28 @@ class BasicPerformancePrediction(BaseTask[BasicPerformancePredictionOptions]):
     def _build_scheduler_(
         self,
         optimizer: torch.optim.Optimizer,
-        step_size: int,
-        gamma: float,
+        start_factor: float,
+        warmup_steps: int,
+        total_steps: int,
+        last_step: int,
     ) -> torch.optim.lr_scheduler.LRScheduler:
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size, gamma=gamma)
+        warmup_lr_schr = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=start_factor,
+            total_iters=warmup_steps,
+            last_epoch=last_step,
+        )
+        cosine_lr_schr = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=total_steps - warmup_steps,
+            last_epoch=last_step,
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_lr_schr, cosine_lr_schr],
+            milestones=[warmup_steps],
+            last_epoch=last_step,
+        )
         return scheduler
 
     def _initialize_fn_(self, model: GATPerformancePrediction | GINPerformancePrediction) -> None:

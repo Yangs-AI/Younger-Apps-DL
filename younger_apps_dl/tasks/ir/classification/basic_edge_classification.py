@@ -82,6 +82,9 @@ class BasicNodeClassificationOptions(BaseModel):
 class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
     OPTIONS = BasicNodeClassificationOptions
 
+    def preprocess(self):
+        preprocessor = StandardPreprocessor(self.options.preprocessor)
+        preprocessor.run()
 
     def train(self):
         self.train_dataset = self._build_dataset_(
