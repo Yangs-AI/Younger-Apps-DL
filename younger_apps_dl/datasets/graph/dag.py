@@ -26,12 +26,11 @@ from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr, GlobalStorag
 from torch_geometric.utils import is_sparse
 
 from younger.commons.io import load_json, load_pickle
+from younger.commons.utils import split_sequence
 
 from younger_logics_ir.modules import LogicX
 
 from younger_apps_dl.datasets import register_dataset
-
-from younger_apps_dl.commons.utils import split_sequence
 from younger_apps_dl.commons.logging import logger
 
 
