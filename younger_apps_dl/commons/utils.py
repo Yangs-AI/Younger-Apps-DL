@@ -18,7 +18,7 @@ import torch
 import numpy
 import random
 
-from typing import Any, Literal, Iterable
+from typing import Any, Literal
 
 
 def make_reproducible(seed: int = 3407, mode: bool = True):
