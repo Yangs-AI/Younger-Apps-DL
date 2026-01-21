@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-13 16:51:10
+# Last Modified time: 2026-01-21 22:54:16
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -92,7 +92,7 @@ class BasicNodeClassification(BaseTask[BasicNodeClassificationOptions]):
 
     def preprocess(self):
         preprocessor = StandardPreprocessor(self.options.preprocessor)
-        preprocessor.run(self)
+        preprocessor.run()
 
     def train(self):
         self.train_dataset = self._build_dataset_(

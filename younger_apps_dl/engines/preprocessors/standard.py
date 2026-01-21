@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-02 04:26:34
+# Last Modified time: 2026-01-21 23:22:19
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -210,10 +210,10 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                                 if selected_node_order < split_scale - 1:
                                     continue
                                 selected_node_indices: list[int] = all_nod2nids[selected_logicx_index][selected_node_order]
-                                split = self.__class__.retrieve_split(logicxs[selected_logicx_index], selected_node_indices, split_scale, self.options.split_limit, self.options.method, self.options.level)
+                                split = self.__class__.retrieve_split(logicxs[selected_logicx_index], selected_node_indices, split_scale, self.options.split_limit, self.options.method)
                                 split_size = split_scale
                             else:
-                                split = self.__class__.retrieve_split(logicxs[selected_logicx_index], [selected_node_index], split_scale, self.options.split_limit, self.options.method, self.options.level)
+                                split = self.__class__.retrieve_split(logicxs[selected_logicx_index], [selected_node_index], split_scale, self.options.split_limit, self.options.method)
                                 split_size = len(split.dag)
 
                             if self.options.level:
