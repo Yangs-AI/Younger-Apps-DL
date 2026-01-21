@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-12 17:50:48
+# Last Modified time: 2026-01-21 21:56:45
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -21,7 +21,9 @@ import pathlib
 from typing import Any, Literal, Callable
 from pydantic import BaseModel, Field
 
-from younger_apps_dl.commons.utils import get_device_descriptor, no_operation
+from younger.commons.utils import no_operation
+
+from younger_apps_dl.commons.utils import get_device_descriptor
 from younger_apps_dl.commons.logging import logger
 from younger_apps_dl.commons.checkpoint import load_checkpoint
 
