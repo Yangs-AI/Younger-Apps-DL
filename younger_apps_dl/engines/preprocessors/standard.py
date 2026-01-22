@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 23:22:19
+# Last Modified time: 2026-01-22 05:38:14
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -14,17 +14,20 @@
 ########################################################################
 
 
+import os
 import tqdm
 import numpy
 import random
 import pathlib
 import networkx
 import collections
+import multiprocessing
 
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from younger.commons.io import save_json, save_pickle
+from younger.commons.utils import split_sequence
 
 from younger_logics_ir.modules import LogicX
 
@@ -52,7 +55,7 @@ class StandardPreprocessorOptions(BaseModel):
                                                                                                '\'MixBasic\' uniformly samples one of the following methods for each subgraph: \'Random\', \'RandomFull\', \'Cascade\', or \'CascadeFull\'. '
                                                                                                '\'MixSuper\' extends MixBasic by additionally including \'Window\' in the set of candidate methods, sampling uniformly among all five.')
 
-    split_scale: list[int] | None = Field(None, description='List of node counts to include in subgraph splits expanded from central nodes. Each value specifies a different subgraph split scale to generate.')
+    split_scales: list[int] | None = Field(None, description='List of node counts to include in subgraph splits expanded from central nodes. Each value specifies a different subgraph split scale to generate.')
     split_count: int | None = Field(None, description='Number of subgraph splits to generate per central node.')
     split_tries: int | None = Field(None, description='Maximum number of attempts to generate `split_count` valid subgraphs (e.g., avoiding duplicates or undersized splits).')
     split_limit: int | None = Field(None, description='Maximum allowed size (in number of nodes) for a subgraph split. If a candidate subgraph exceeds this size, it will be discarded. '
@@ -74,61 +77,68 @@ class StandardPreprocessorOptions(BaseModel):
 
     uuid_threshold: int | None = Field(None, ge=0, description='Occurence threshold to ignore uuid, lower than threshold will be discarded.')
     seed: int = Field(16861, ge=0, description='Random seed for deterministic behavior during sampling.')
+    worker_number: int = Field(1, ge=1, description='Number of parallel worker processes. Set to 1 for single-process mode.')
 
 
 @register_engine('preprocessor', 'standard')
 class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
     OPTIONS = StandardPreprocessorOptions
 
-    def run(self) -> None:
-        random.seed(self.options.seed)
-        numpy.random.seed(self.options.seed)
+    @staticmethod
+    def _load_logicx_by_chunk_(parameters: tuple[list[pathlib.Path], int, int, int, int | None, int | None]) -> tuple[list[LogicX], list[str], dict[str, dict[int, set[str]]], dict[str, dict[str, int]], dict[str, dict[int, list[str]]]]:
+        """
+        Load and filter a chunk of LogicX files in parallel.
 
-        logger.info(f'Reading LogicX Files from {self.options.load_dirpath.absolute()} ... ')
-        logger.info(f'Random Seed = {self.options.seed}')
-        logger.info(f'Subgraph Extraction: {"Enabled" if self.options.subgraph else "Disabled"}')
+        Parameters:
+        parameters: tuple containing:
+            - logicx_filepaths: list of LogicX file paths to load
+            - logicx_initial_index: starting index for logicx from origin this chunk
+            - seed: random seed for deterministic behavior
+            - worker_index: index of the worker process (for position of progress bar)
+            - min_dag_size: minimum DAG size filter
+            - max_dag_size: maximum DAG size filter
 
-        # Step 1: Load and Filter LogicX files
-        logicx_filepaths = sorted([logicx_filepath for logicx_filepath in self.options.load_dirpath.iterdir()])
-        logger.info(f'Scanning and Loading LogicX files ...')
+        Returns:
+            - list of loaded LogicX objects
+            - list of LogicX hashes
+            - dict of all UUID positions across loaded LogicX objects
+            - dict mapping logicx index to node index to node order
+            - dict mapping logicx index to node order to list of node indices
+        """
+        logicx_filepaths, logicx_initial_index, seed, worker_index, min_dag_size, max_dag_size = parameters
+        random.seed(seed)
+        numpy.random.seed(seed)
+
         logicxs: list[LogicX] = list() # [logicx1, logicx2, ...]
         logicx_hashes: list[str] = list() # [logicx1_hash, logicx2_hash, ...]
         all_uuid_positions: dict[str, dict[int, set[str]]] = dict() # {uuid: {logicx_index: set[node_index]}}
         all_nid2nod: dict[str, dict[str, int]] = dict() # {logicx_index: {node_index: order}}
         all_nod2nids: dict[str, dict[int, list[str]]] = dict() # {logicx_index: {order: list[node_index]}}
 
-        with tqdm.tqdm(total=len(logicx_filepaths)) as progress_bar:
-            logicx_index = 0
+        with tqdm.tqdm(total=len(logicx_filepaths), position=worker_index) as progress_bar:
+            logicx_index = logicx_initial_index
             for logicx_filepath in logicx_filepaths:
                 progress_bar.update(1)
                 logicx = LogicX()
                 logicx.load(logicx_filepath)
 
                 dag_size = len(logicx.dag)
-                if self.options.min_dag_size is None or self.options.min_dag_size <= dag_size:
-                    min_dag_size_meet = True
-                else:
-                    min_dag_size_meet = False
-
-                if self.options.max_dag_size is None or dag_size <= self.options.max_dag_size:
-                    max_dag_size_meet = True
-                else:
-                    max_dag_size_meet = False
-
-                if not (min_dag_size_meet and max_dag_size_meet):
+                if min_dag_size is not None and dag_size < min_dag_size:
                     continue
-
+                if max_dag_size is not None and dag_size > max_dag_size:
+                    continue
                 logicxs.append(logicx)
                 logicx_hashes.append(logicx_filepath.name)
 
-                # Generate UUID Positions and Node Orders
-                # {uuid: {logicx_index: set[node_index]}}
-                # uuid is the operator type
-                # logicx_index is the index of logicx in logicxs
-                # node_index is the index of node in logicx.dag
-                # e.g., {'uuid1': {0: {'n1', 'n2'}, 2: {'n3'}}, 'uuid2': {1: {'n4'}}}
-                # Thus, uuid1 appears in logicx 0 at nodes n1 and n2, and in logicx 2 at node n3; uuid2 appears in logicx 1 at node n4.
+                # Generate UUID Positions
                 for node_index in logicx.dag.nodes:
+                    # Generate UUID Positions and Node Orders
+                    # {uuid: {logicx_index: set[node_index]}}
+                    # uuid is the operator type
+                    # logicx_index is the index of logicx in logicxs
+                    # node_index is the index of node in logicx.dag
+                    # e.g., {'uuid1': {0: {'n1', 'n2'}, 2: {'n3'}}, 'uuid2': {1: {'n4'}}}
+                    # Thus, uuid1 appears in logicx 0 at nodes n1 and n2, and in logicx 2 at node n3; uuid2 appears in logicx 1 at node n4.
                     uuid = logicx.dag.nodes[node_index]['node_uuid']
                     uuid_positions = all_uuid_positions.get(uuid, dict())
                     node_indices = uuid_positions.get(logicx_index, set())
@@ -147,6 +157,198 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     all_nod2nids[logicx_index].setdefault(all_nid2nod[logicx_index][node_index], list()).append(node_index)
 
                 logicx_index += 1
+
+        return logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids
+
+    @staticmethod
+    def _extract_subgraphs_for_uuid_(
+        parameters: tuple[ str, dict[int, set[str]],
+            list[LogicX],
+            list[int], int, int, int,
+            Literal['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window', 'MixBasic', 'MixSuper'] | None,
+            dict[str, dict[str, int]], dict[str, dict[int, list[str]]],
+            bool, int, int
+        ]
+    ) -> tuple[ str, dict[int, dict[str, LogicX]], dict[int, dict[str, list[str]]] ]:
+        """Extract subgraphs for a single UUID across all split scales.
+
+        Arguments:
+        parameters: tuple containing:
+            - uuid: the operator UUID
+            - uuid_positions: dict mapping logicx_index to node indices
+            - logicxs: list of LogicX objects
+            - split_scales: list of split scale values
+            - split_count: number of splits to generate
+            - split_tries: maximum attempts to generate splits
+            - split_limit: maximum subgraph size limit
+            - method: extraction method name
+            - all_nid2nod: node index to node order mapping
+            - all_nod2nids: node order to node indices mapping
+            - level: whether to mark levels
+            - seed: seed for randomization
+            - worker_index: index of worker process (for position of progress bar)
+
+        Returns:
+            - tuple of (uuid, uuid_splits, uuid_split_hashes)
+        """
+        (
+            uuid, uuid_positions,
+            logicxs,
+            split_scales, split_count, split_tries, split_limit,
+            method,
+            all_nid2nod, all_nod2nids,
+            level, seed, worker_index
+        ) = parameters
+
+        random.seed(seed)
+        numpy.random.seed(seed)
+
+        uuid_splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {split_hash: split}}
+        uuid_split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {uuid: list[split_hash]}}
+
+        with tqdm.tqdm(total=len(split_scales), position=worker_index, desc=f'UUID: ') as progress_bar:
+            # Single-process mode
+            # For Each Split Size:
+            for split_scale in split_scales:
+                # For Each Operator:
+                current_tries: int = 0
+                current_split_count: int = 0
+                candidate_logicx_indices: set[int] = set(uuid_positions.keys())
+
+                # Generate Subgraph Split Repeatedly
+                while len(candidate_logicx_indices) != 0 and current_split_count < split_count:
+                    if not (current_tries < split_tries):
+                        break
+
+                    selected_logicx_index: int = int(numpy.random.choice(list(candidate_logicx_indices)))
+                    selected_node_index: str = str(numpy.random.choice(list(uuid_positions[selected_logicx_index])))
+
+                    active_method = method
+                    if method == 'MixBasic':
+                        active_method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull'])
+                    if method == 'MixSuper':
+                        active_method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window'])
+
+                    if active_method == 'Window':
+                        selected_node_order: int = all_nid2nod[selected_logicx_index][selected_node_index]
+                        if selected_node_order < split_scale - 1:
+                            continue
+                        selected_node_indices: list[int] = all_nod2nids[selected_logicx_index][selected_node_order]
+                        split = StandardPreprocessor.retrieve_split(
+                            logicxs[selected_logicx_index], selected_node_indices, 
+                            split_scale, split_limit, active_method
+                        )
+                        split_size = split_scale
+                    else:
+                        split = StandardPreprocessor.retrieve_split(
+                            logicxs[selected_logicx_index], [selected_node_index], 
+                            split_scale, split_limit, active_method
+                        )
+                        split_size = len(split.dag)
+
+                    if level:
+                        StandardPreprocessor.mark_node_levels(split.dag)
+                        split.dag.graph['level'] = True
+                    else:
+                        split.dag.graph['level'] = False
+
+                    current_tries += 1
+                    if split_size not in split_scales:
+                        continue
+
+                    split_hash = LogicX.hash(split)
+                    if split_hash in uuid_splits[split_size]:
+                        continue
+
+                    split.dag.graph['origin'] = selected_logicx_index
+                    uuid_splits[split_size][split_hash] = split
+                    uuid_split_hashes[split_size].setdefault(uuid, list()).append(split_hash)
+                    current_split_count += 1
+
+                # Mark This LogicX as Exhausted if No More Splits Can Be Generated
+                if current_split_count < split_count:
+                    flag = f'No!'
+                else:
+                    flag = f'Ye!'
+                progress_bar.set_description(f'Current: {uuid} Enough: ({flag})')
+                progress_bar.update(1)
+
+        return (uuid, uuid_splits, uuid_split_hashes)
+
+    @staticmethod
+    def _mark_levels_by_chunk_(parameters: tuple[list[LogicX], bool, int]) -> list[LogicX]:
+        """
+        Mark levels for a chunk of LogicX objects.
+
+        Arguments:
+        parameters: tuple containing:
+            - logicxs_chunk: list of LogicX objects to process
+            - level_flag: whether to mark levels
+            - worker_index: index of the worker process (for position of progress bar)
+
+        Returns:
+            - list of processed LogicX objects
+        """
+        logicxs_chunk, level_flag, worker_index = parameters
+        with tqdm.tqdm(total=len(logicxs_chunk), position=worker_index) as progress_bar:
+            for logicx in logicxs_chunk:
+                if level_flag:
+                    StandardPreprocessor.mark_node_levels(logicx.dag)
+                    logicx.dag.graph['level'] = True
+                else:
+                    logicx.dag.graph['level'] = False
+                progress_bar.update(1)
+        return logicxs_chunk
+
+    def run(self) -> None:
+        random.seed(self.options.seed)
+        numpy.random.seed(self.options.seed)
+
+        logger.info(f'Reading LogicX Files from {self.options.load_dirpath.absolute()} ... ')
+        logger.info(f'Random Seed = {self.options.seed}')
+        logger.info(f'Subgraph Extraction: {"Enabled" if self.options.subgraph else "Disabled"}')
+
+        # Step 1: Load and Filter LogicX files
+        logicx_filepaths = sorted([logicx_filepath for logicx_filepath in self.options.load_dirpath.iterdir()])
+        logger.info(f'Scanning and Loading LogicX files ...')
+        logger.info(f'Using {self.options.worker_number} worker(s)')
+
+        if self.options.worker_number == 1:
+            # Single-process mode
+            logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids = StandardPreprocessor._load_logicx_by_chunk_(logicx_filepaths, 0, self.options.seed, 0, self.options.min_dag_size, self.options.max_dag_size)
+        else:
+            # Multiple-process mode
+            chunk_number = self.options.worker_number * 4
+            logicx_filepaths_chunks = split_sequence(logicx_filepaths, chunk_number)
+            logicx_initial_indices = [0] + [
+                sum(len(logicx_filepath_chunk) for logicx_filepath_chunk in logicx_filepaths_chunks[:i]) for i in range(1, chunk_number)
+            ]
+            chunks = [(logicx_filepaths_chunk, logicx_initial_indices[i], self.options.seed, i, self.options.min_dag_size, self.options.max_dag_size) for i, logicx_filepaths_chunk in enumerate(logicx_filepaths_chunks)]
+            logicxs: list[LogicX] = list()
+            logicx_hashes: list[str] = list()
+            all_uuid_positions: dict[str, dict[int, set[str]]] = dict()
+            all_nid2nod: dict[str, dict[str, int]] = dict()
+            all_nod2nids: dict[str, dict[int, list[str]]] = dict()
+
+            with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                # Merge results (no reindexing needed since _load_logicx_by_chunk_ uses global indices)
+                for result in pool.imap(StandardPreprocessor._load_logicx_by_chunk_, chunks):
+                    chunk_logicxs, chunk_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids = result
+
+                    # Direct merge for lists
+                    logicxs.extend(chunk_logicxs)
+                    logicx_hashes.extend(chunk_logicx_hashes)
+
+                    # Direct merge for dicts with non-conflicting keys (global indices)
+                    all_nid2nod.update(chunk_all_nid2nod)
+                    all_nod2nids.update(chunk_all_nod2nids)
+
+                    # Merge nested dict for all_uuid_positions (uuid -> logicx_index -> node_indices)
+                    for uuid, positions in chunk_all_uuid_positions.items():
+                        if uuid in all_uuid_positions:
+                            all_uuid_positions[uuid].update(positions)
+                        else:
+                            all_uuid_positions[uuid] = positions
 
         logger.info(f'Loaded {len(logicxs)} DAGs matching size criteria.')
 
@@ -183,64 +385,41 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             logger.info(f'Splitting ...')
             splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in self.options.split_scale} # {split_scale: {split_hash: split}}
             split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in self.options.split_scale} # {split_scale: {uuid: list[split_hash]}}
-            # For Each Split Size:
-            for split_scale in self.options.split_scale:
-                # For Each Operator:
-                logger.info(f' -> Now Retrieving Subgraph Splits with Size {split_scale}...')
-                with tqdm.tqdm(total=len(all_uuid_positions)) as progress_bar:
-                    for uuid, uuid_positions in all_uuid_positions.items():
-                        current_tries = 0
-                        current_split_count = 0
-                        candidate_logicx_indices: set[int] = set(uuid_positions.keys())
-                        # Generate Subgraph Split Repeatedly
-                        while len(candidate_logicx_indices) != 0 and current_split_count < self.options.split_count:
-                            if not (current_tries < self.options.split_tries):
-                                break
-                            selected_logicx_index: int = int(numpy.random.choice(list(candidate_logicx_indices)))
-                            selected_node_index: str = str(numpy.random.choice(list(uuid_positions[selected_logicx_index])))
 
-                            method = self.options.method
-                            if self.options.method == 'MixBasic':
-                                method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull'])
-                            if self.options.method == 'MixSuper':
-                                method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window'])
+            # Build tasks for all UUIDs (used in both single and multi-process modes)
+            tasks = [
+                (
+                    uuid, uuid_positions,
+                    logicxs,
+                    self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
+                    self.options.method,
+                    all_nid2nod, all_nod2nids,
+                    self.options.level, self.options.seed, i
+                )
+                for i, (uuid, uuid_positions) in enumerate(all_uuid_positions.items())
+            ]
 
-                            if method == 'Window':
-                                selected_node_order: int = all_nid2nod[selected_logicx_index][selected_node_index]
-                                if selected_node_order < split_scale - 1:
-                                    continue
-                                selected_node_indices: list[int] = all_nod2nids[selected_logicx_index][selected_node_order]
-                                split = self.__class__.retrieve_split(logicxs[selected_logicx_index], selected_node_indices, split_scale, self.options.split_limit, self.options.method)
-                                split_size = split_scale
-                            else:
-                                split = self.__class__.retrieve_split(logicxs[selected_logicx_index], [selected_node_index], split_scale, self.options.split_limit, self.options.method)
-                                split_size = len(split.dag)
+            if self.options.worker_number == 1:
+                # Single-process mode: execute tasks sequentially
+                logger.info(f'Processing Subgraph Extraction Sequentially...')
+                results = [StandardPreprocessor._extract_subgraphs_for_uuid_(task) for task in tasks]
+            else:
+                # Multiple-process mode: execute tasks in parallel
+                logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
+                with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                    results = list(pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks))
+            logger.info(f'Subgraph Extraction Completed.')
 
-                            if self.options.level:
-                                self.__class__.mark_node_levels(split.dag)
-                                split.dag.graph['level'] = True
-                            else:
-                                split.dag.graph['level'] = False
-
-                            current_tries += 1
-                            if split_size not in self.options.split_scale:
-                                continue
-                            split_hash = LogicX.hash(split)
-                            if split_hash in splits[split_size]:
-                                continue
-                            split.dag.graph['origin'] = logicx_hashes[selected_logicx_index]
-                            splits[split_size][split_hash] = split
-                            current_split_count += 1
-                            # Add To Split
-                            split_hashes[split_size].setdefault(uuid, list()).append(split_hash)
-
-                        # Mark This LogicX as Exhausted if No More Splits Can Be Generated
-                        if current_split_count < self.options.split_count:
-                            flag = f'No!'
-                        else:
-                            flag = f'Ye!'
-                        progress_bar.set_description(f'Current: {uuid} Enough: ({flag})')
-                        progress_bar.update(1)
+            # Merge Results and Restore Origin Hashes (Common for Both Modes)
+            for uuid, uuid_splits, uuid_split_hashes in results:
+                for split_scale in self.options.split_scales:
+                    for split_hash, split in uuid_splits[split_scale].items():
+                        # Restore actual origin filename
+                        origin = int(split.dag.graph['origin'])
+                        split.dag.graph['origin'] = logicx_hashes[origin]
+                        splits[split_scale][split_hash] = split
+                    if uuid_split_hashes[split_scale]:
+                        split_hashes[split_scale][uuid] = uuid_split_hashes[split_scale]
 
             items_with_hashes = [
                 (split_hash, splits[split_scale][split_hash])
@@ -251,14 +430,19 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         else:
             # Full DAG Mode: Use Full DAGs Directly Without Subgraph Extraction
             logger.info(f'Marking levels for full DAGs ...')
-            with tqdm.tqdm(total=len(logicxs)) as progress_bar:
-                for logicx in logicxs:
-                    if self.options.level:
-                        self.__class__.mark_node_levels(logicx.dag)
-                        logicx.dag.graph['level'] = True
-                    else:
-                        logicx.dag.graph['level'] = False
-                    progress_bar.update(1)
+            if self.options.worker_number == 1:
+                # Single-process mode
+                StandardPreprocessor._mark_levels_by_chunk_((logicxs, self.options.level, 0))
+            else:
+                # Multiple-process mode
+                chunk_number = self.options.worker_number * 4
+                logicxs_chunks = split_sequence(logicxs, chunk_number)
+                chunks = [(logicxs_chunk, self.options.level, i) for i, logicxs_chunk in enumerate(logicxs_chunks)]
+                with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                    logicxs = list()
+                    for logicxs_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
+                        logicxs.extend(logicxs_chunk)
+
             items_with_hashes = [(logicx_hash, logicx) for logicx_hash, logicx in zip(logicx_hashes, logicxs)]
 
         # Step 4: Shuffle and Split into Train/Validation/Test
