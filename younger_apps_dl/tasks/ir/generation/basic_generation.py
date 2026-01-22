@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-14 21:20:05
+# Last Modified time: 2026-01-21 19:13:16
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -80,19 +80,20 @@ class BasicGenerationOptions(BaseModel):
 
     generation_initial_level: int = Field(0, ge=0, description='Number of initial levels (L) to use as ground truth in autoregressive generation. Nodes in levels 0 to L-1 are kept unchanged; levels L and beyond are masked and predicted.')
 
-    trainer: StandardTrainerOptions
-    evaluator: StandardEvaluatorOptions
-    preprocessor: StandardPreprocessorOptions
-    predictor: StandardPredictorOptions
+    # Stage-specific options (Optional fields based on which stage is being run)
+    trainer: StandardTrainerOptions | None = Field(None, description='Trainer options, required for training stage.')
+    evaluator: StandardEvaluatorOptions | None = Field(None, description='Evaluator options, required for evaluation stage.')
+    preprocessor: StandardPreprocessorOptions | None = Field(None, description='Preprocessor options, required for preprocessing stage.')
+    predictor: StandardPredictorOptions | None = Field(None, description='Predictor options, required for prediction stage.')
 
-    train_dataset: DatasetOptions
-    valid_dataset: DatasetOptions
-    test_dataset: DatasetOptions
-    predict_dataset: DatasetOptions
+    train_dataset: DatasetOptions | None = Field(None, description='Training dataset options, required for training stage.')
+    valid_dataset: DatasetOptions | None = Field(None, description='Validation dataset options, required for training stage.')
+    test_dataset: DatasetOptions | None = Field(None, description='Test dataset options, required for evaluation stage.')
+    predict_dataset: DatasetOptions | None = Field(None, description='Prediction dataset options, required for prediction stage.')
 
-    model: ModelOptions
-    optimizer: OptimizerOptions
-    scheduler: SchedulerOptions
+    model: ModelOptions | None = Field(None, description='Model options, required for training/evaluation/prediction stages.')
+    optimizer: OptimizerOptions | None = Field(None, description='Optimizer options, required for training stage.')
+    scheduler: SchedulerOptions | None = Field(None, description='Scheduler options, required for training stage.')
 
 # Self-Supervised Learning for Node Prediction
 @register_task('ir', 'basic_generation')
@@ -107,11 +108,58 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
     """
     OPTIONS = BasicGenerationOptions
 
-    def preprocess(self):
+    def _check_options_(self, stage: Literal['preprocess', 'train', 'evaluate', 'predict', 'postprocess']) -> None:
+        """Check if required options are provided for the given stage.
+
+        Args:
+            stage: The stage to check options for.
+
+        Raises:
+            ValueError: If required options are missing for the given stage.
+        """
+        if stage == 'preprocess':
+            if self.options.preprocessor is None:
+                raise ValueError("preprocessor options are required for preprocessing stage")
+
+        elif stage == 'train':
+            if self.options.train_dataset is None:
+                raise ValueError("train_dataset options are required for training stage")
+            if self.options.valid_dataset is None:
+                raise ValueError("valid_dataset options are required for training stage")
+            if self.options.model is None:
+                raise ValueError("model options are required for training stage")
+            if self.options.optimizer is None:
+                raise ValueError("optimizer options are required for training stage")
+            if self.options.scheduler is None:
+                raise ValueError("scheduler options are required for training stage")
+            if self.options.trainer is None:
+                raise ValueError("trainer options are required for training stage")
+
+        elif stage == 'evaluate':
+            if self.options.test_dataset is None:
+                raise ValueError("test_dataset options are required for evaluation stage")
+            if self.options.model is None:
+                raise ValueError("model options are required for evaluation stage")
+            if self.options.evaluator is None:
+                raise ValueError("evaluator options are required for evaluation stage")
+
+        elif stage == 'predict':
+            if self.options.predict_dataset is None:
+                raise ValueError("predict_dataset options are required for prediction stage")
+            if self.options.model is None:
+                raise ValueError("model options are required for prediction stage")
+            if self.options.predictor is None:
+                raise ValueError("predictor options are required for prediction stage")
+
+        elif stage == 'postprocess':
+            # Currently no specific requirements for postprocess stage
+            pass
+
+    def _preprocess_(self):
         preprocessor = StandardPreprocessor(self.options.preprocessor)
         preprocessor.run()
 
-    def train(self):
+    def _train_(self):
         self.train_dataset = self._build_dataset_(
             self.options.train_dataset.meta_filepath,
             self.options.train_dataset.raw_dirpath,
@@ -171,7 +219,7 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
             dataloader_type='pyg',
         )
 
-    def evaluate(self):
+    def _evaluate_(self):
         self.test_dataset = self._build_dataset_(
             self.options.test_dataset.meta_filepath,
             self.options.test_dataset.raw_dirpath,
@@ -200,7 +248,7 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
             dataloader_type='pyg',
         )
 
-    def predict(self):
+    def _predict_(self):
         """
         The filepath of the meta file used during prediction must be the same as that used during training.
         """
@@ -223,6 +271,10 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
             predict_raw_fn=self._predict_raw_fn_,
             initialize_fn=self._initialize_fn_,
         )
+
+    def _postprocess_(self):
+        """Postprocess implementation (currently not used in this task)."""
+        raise NotImplementedError("Postprocessing is not implemented for BasicGeneration task")
 
     def _build_model_(self, model_type: Literal['MAEGIN'], node_emb_size: int, node_emb_dim: int, hidden_dim: int, dropout_rate: float, layer_number: int) -> MAEGIN:
         if model_type == 'MAEGIN':
