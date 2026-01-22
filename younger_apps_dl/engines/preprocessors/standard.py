@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-22 22:42:57
+# Last Modified time: 2026-01-22 22:52:34
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -314,47 +314,42 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         logger.info(f'Scanning and Loading LogicX files ...')
         logger.info(f'Using {self.options.worker_number} worker(s)')
 
-        if self.options.worker_number == 1:
-            # Single-process mode
-            progress_manager = MultipleProcessProgressManager(worker_number=1, update_percentage=0.005)
-            logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids = StandardPreprocessor._load_logicx_by_chunk_((logicx_filepaths, 0, self.options.seed, progress_manager, self.options.min_dag_size, self.options.max_dag_size))
-        else:
-            # Multiple-process mode
-            progress_manager = MultipleProcessProgressManager(worker_number=self.options.worker_number, update_percentage=0.005)
+        progress_manager = MultipleProcessProgressManager(worker_number=self.options.worker_number, step=0.005)
 
-            chunk_number = self.options.worker_number * 4
-            logicx_filepaths_chunks = split_sequence(logicx_filepaths, chunk_number)
-            logicx_initial_indices = [0] + [
-                sum(len(logicx_filepath_chunk) for logicx_filepath_chunk in logicx_filepaths_chunks[:i]) for i in range(1, chunk_number)
-            ]
+        # Prepare chunks for loading
+        chunk_number = self.options.worker_number * 4
+        logicx_filepaths_chunks = split_sequence(logicx_filepaths, chunk_number)
+        logicx_initial_indices = [0] + [
+            sum(len(logicx_filepath_chunk) for logicx_filepath_chunk in logicx_filepaths_chunks[:i]) for i in range(1, len(logicx_filepaths_chunks))
+        ]
+        chunks = [(logicx_filepaths_chunk, logicx_initial_indices[i], self.options.seed, progress_manager, self.options.min_dag_size, self.options.max_dag_size) for i, logicx_filepaths_chunk in enumerate(logicx_filepaths_chunks)]
 
-            chunks = [(logicx_filepaths_chunk, logicx_initial_indices[i], self.options.seed, progress_manager, self.options.min_dag_size, self.options.max_dag_size) for i, logicx_filepaths_chunk in enumerate(logicx_filepaths_chunks)]
-            logicxs: list[LogicX] = list()
-            logicx_hashes: list[str] = list()
-            all_uuid_positions: dict[str, dict[int, set[str]]] = dict()
-            all_nid2nod: dict[str, dict[str, int]] = dict()
-            all_nod2nids: dict[str, dict[int, list[str]]] = dict()
+        logicxs: list[LogicX] = list()
+        logicx_hashes: list[str] = list()
+        all_uuid_positions: dict[str, dict[int, set[str]]] = dict()
+        all_nid2nod: dict[str, dict[str, int]] = dict()
+        all_nod2nids: dict[str, dict[int, list[str]]] = dict()
 
-            with progress_manager.progress(total=chunk_number, desc='Loading LogicX files') as tracker:
-                with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                    for result in pool.imap(StandardPreprocessor._load_logicx_by_chunk_, chunks):
-                        chunk_logicxs, chunk_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids = result
+        with progress_manager.progress(total=len(chunks), desc='Loading LogicX files') as tracker:
+            with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                for result in pool.imap(StandardPreprocessor._load_logicx_by_chunk_, chunks):
+                    chunk_logicxs, chunk_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids = result
 
-                        # Direct merge for lists
-                        logicxs.extend(chunk_logicxs)
-                        logicx_hashes.extend(chunk_logicx_hashes)
+                    # Direct merge for lists
+                    logicxs.extend(chunk_logicxs)
+                    logicx_hashes.extend(chunk_logicx_hashes)
 
-                        # Direct merge for dicts with non-conflicting keys (global indices)
-                        all_nid2nod.update(chunk_all_nid2nod)
-                        all_nod2nids.update(chunk_all_nod2nids)
+                    # Direct merge for dicts with non-conflicting keys (global indices)
+                    all_nid2nod.update(chunk_all_nid2nod)
+                    all_nod2nids.update(chunk_all_nod2nids)
 
-                        # Merge nested dict for all_uuid_positions (uuid -> logicx_index -> node_indices)
-                        for uuid, positions in chunk_all_uuid_positions.items():
-                            if uuid in all_uuid_positions:
-                                all_uuid_positions[uuid].update(positions)
-                            else:
-                                all_uuid_positions[uuid] = positions
-                        tracker.update()
+                    # Merge nested dict for all_uuid_positions (uuid -> logicx_index -> node_indices)
+                    for uuid, positions in chunk_all_uuid_positions.items():
+                        if uuid in all_uuid_positions:
+                            all_uuid_positions[uuid].update(positions)
+                        else:
+                            all_uuid_positions[uuid] = positions
+                    tracker.update()
 
         logger.info(f'Loaded {len(logicxs)} DAGs matching size criteria.')
 
@@ -392,44 +387,27 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {split_hash: split}}
             split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {uuid: list[split_hash]}}
 
-            # Build tasks for all UUIDs (used in both single and multi-process modes)
-            if self.options.worker_number == 1:
-                # Single-process mode: execute tasks sequentially
-                logger.info(f'Processing Subgraph Extraction Sequentially...')
-                progress_manager = MultipleProcessProgressManager(worker_number=1, update_percentage=0.005)
-                tasks = [
-                    (
-                        uuid, uuid_positions,
-                        logicxs,
-                        self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
-                        self.options.method,
-                        all_nid2nod, all_nod2nids,
-                        self.options.level, self.options.seed, progress_manager
-                    )
-                    for uuid, uuid_positions in all_uuid_positions.items()
-                ]
-                results = [StandardPreprocessor._extract_subgraphs_for_uuid_(task) for task in tasks]
-            else:
-                # Multiple-process mode: execute tasks in parallel
-                logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
-                progress_manager = MultipleProcessProgressManager(worker_number=self.options.worker_number, update_percentage=0.005)
-                tasks = [
-                    (
-                        uuid, uuid_positions,
-                        logicxs,
-                        self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
-                        self.options.method,
-                        all_nid2nod, all_nod2nids,
-                        self.options.level, self.options.seed, progress_manager
-                    )
-                    for uuid, uuid_positions in all_uuid_positions.items()
-                ]
-                results = []
-                with progress_manager.track_progress(total=len(tasks), desc='Extracting subgraphs', task_type='extract') as tracker:
-                    with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                        for result in pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks):
-                            results.append(result)
-                            tracker.update()
+            # Build tasks for all UUIDs
+            progress_manager = MultipleProcessProgressManager(worker_number=self.options.worker_number, step=0.005)
+            tasks = [
+                (
+                    uuid, uuid_positions,
+                    logicxs,
+                    self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
+                    self.options.method,
+                    all_nid2nod, all_nod2nids,
+                    self.options.level, self.options.seed, progress_manager
+                )
+                for uuid, uuid_positions in all_uuid_positions.items()
+            ]
+
+            logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
+            results = list()
+            with progress_manager.progress(total=len(tasks), desc='Extracting subgraphs') as tracker:
+                with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                    for result in pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks):
+                        results.append(result)
+                        tracker.drain_remaining()
             logger.info(f'Subgraph Extraction Completed.')
 
             # Merge Results and Restore Origin Hashes (Common for Both Modes)
@@ -452,24 +430,19 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         else:
             # Full DAG Mode: Use Full DAGs Directly Without Subgraph Extraction
             logger.info(f'Marking levels for full DAGs ...')
-            if self.options.worker_number == 1:
-                # Single-process mode
-                progress_manager = MultipleProcessProgressManager(worker_number=1, update_percentage=0.005)
-                StandardPreprocessor._mark_levels_by_chunk_((logicxs, self.options.level, progress_manager))
-            else:
-                # Multiple-process mode
-                progress_manager = MultipleProcessProgressManager(worker_number=self.options.worker_number, update_percentage=0.005)
+            progress_manager = MultipleProcessProgressManager(worker_number=self.options.worker_number, step=0.005)
 
-                chunk_number = self.options.worker_number * 4
-                logicxs_chunks = split_sequence(logicxs, chunk_number)
-                chunks = [(logicxs_chunk, self.options.level, progress_manager) for logicxs_chunk in logicxs_chunks]
-                
-                with progress_manager.progress(total=chunk_number, desc='Marking levels') as tracker:
-                    with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                        logicxs = list()
-                        for logicxs_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
-                            logicxs.extend(logicxs_chunk)
-                            tracker.update()
+            # Prepare chunks for marking
+            chunk_number = self.options.worker_number * 4
+            logicxs_chunks = split_sequence(logicxs, chunk_number)
+            chunks = [(logicxs_chunk, self.options.level, progress_manager) for logicxs_chunk in logicxs_chunks]
+
+            with progress_manager.progress(total=len(chunks), desc='Marking levels') as tracker:
+                with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                    logicxs = list()
+                    for logicxs_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
+                        logicxs.extend(logicxs_chunk)
+                        tracker.update()
 
             items_with_hashes = [(logicx_hash, logicx) for logicx_hash, logicx in zip(logicx_hashes, logicxs)]
 
