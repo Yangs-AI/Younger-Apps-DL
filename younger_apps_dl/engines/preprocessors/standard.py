@@ -85,14 +85,6 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
     OPTIONS = StandardPreprocessorOptions
 
     @staticmethod
-    def _get_worker_position(worker_number: int) -> int:
-        """Map current process to a stable progress-bar slot based on PID."""
-        try:
-            return os.getpid() % worker_number
-        except Exception:
-            return 0
-
-    @staticmethod
     def _load_logicx_by_chunk_(parameters: tuple[list[pathlib.Path], int, int, int, int | None, int | None]) -> tuple[list[LogicX], list[str], dict[str, dict[int, set[str]]], dict[str, dict[str, int]], dict[str, dict[int, list[str]]]]:
         """
         Load and filter a chunk of LogicX files in parallel.
@@ -102,7 +94,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - logicx_filepaths: list of LogicX file paths to load
             - logicx_initial_index: starting index for logicx from origin this chunk
             - seed: random seed for deterministic behavior
-            - worker_number: total worker count for stable progress bar positioning
+            - position: fixed progress bar slot assigned by parent
             - min_dag_size: minimum DAG size filter
             - max_dag_size: maximum DAG size filter
 
@@ -113,8 +105,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - dict mapping logicx index to node index to node order
             - dict mapping logicx index to node order to list of node indices
         """
-        logicx_filepaths, logicx_initial_index, seed, worker_number, min_dag_size, max_dag_size = parameters
-        position = StandardPreprocessor._get_worker_position(worker_number)
+        logicx_filepaths, logicx_initial_index, seed, position, min_dag_size, max_dag_size = parameters
         random.seed(seed)
         numpy.random.seed(seed)
 
@@ -195,7 +186,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - all_nod2nids: node order to node indices mapping
             - level: whether to mark levels
             - seed: seed for randomization
-            - worker_number: total worker count for stable progress bar positioning
+            - position: fixed progress bar slot assigned by parent
 
         Returns:
             - tuple of (uuid, uuid_splits, uuid_split_hashes)
@@ -206,9 +197,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             split_scales, split_count, split_tries, split_limit,
             method,
             all_nid2nod, all_nod2nids,
-            level, seed, worker_number
+            level, seed, position
         ) = parameters
-        position = StandardPreprocessor._get_worker_position(worker_number)
 
         random.seed(seed)
         numpy.random.seed(seed)
@@ -294,13 +284,12 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         parameters: tuple containing:
             - logicxs_chunk: list of LogicX objects to process
             - level_flag: whether to mark levels
-            - worker_number: total worker count for stable progress bar positioning
+            - position: fixed progress bar slot assigned by parent
 
         Returns:
             - list of processed LogicX objects
         """
-        logicxs_chunk, level_flag, worker_number = parameters
-        position = StandardPreprocessor._get_worker_position(worker_number)
+        logicxs_chunk, level_flag, position = parameters
         with tqdm.tqdm(total=len(logicxs_chunk), desc='Marking levels', position=position, leave=False) as progress_bar:
             for logicx in logicxs_chunk:
                 if level_flag:
@@ -326,7 +315,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
         if self.options.worker_number == 1:
             # Single-process mode
-            logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids = StandardPreprocessor._load_logicx_by_chunk_((logicx_filepaths, 0, self.options.seed, self.options.worker_number, self.options.min_dag_size, self.options.max_dag_size))
+            logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids = StandardPreprocessor._load_logicx_by_chunk_((logicx_filepaths, 0, self.options.seed, 0, self.options.min_dag_size, self.options.max_dag_size))
         else:
             # Multiple-process mode
             chunk_number = self.options.worker_number * 4
@@ -334,7 +323,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             logicx_initial_indices = [0] + [
                 sum(len(logicx_filepath_chunk) for logicx_filepath_chunk in logicx_filepaths_chunks[:i]) for i in range(1, chunk_number)
             ]
-            chunks = [(logicx_filepaths_chunk, logicx_initial_indices[i], self.options.seed, self.options.worker_number, self.options.min_dag_size, self.options.max_dag_size) for i, logicx_filepaths_chunk in enumerate(logicx_filepaths_chunks)]
+            chunks = [(logicx_filepaths_chunk, logicx_initial_indices[i], self.options.seed, i % self.options.worker_number, self.options.min_dag_size, self.options.max_dag_size) for i, logicx_filepaths_chunk in enumerate(logicx_filepaths_chunks)]
             logicxs: list[LogicX] = list()
             logicx_hashes: list[str] = list()
             all_uuid_positions: dict[str, dict[int, set[str]]] = dict()
@@ -405,9 +394,9 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
                     self.options.method,
                     all_nid2nod, all_nod2nids,
-                    self.options.level, self.options.seed, self.options.worker_number
+                    self.options.level, self.options.seed, i % self.options.worker_number
                 )
-                for uuid, uuid_positions in all_uuid_positions.items()
+                for i, (uuid, uuid_positions) in enumerate(all_uuid_positions.items())
             ]
 
             if self.options.worker_number == 1:
@@ -443,12 +432,12 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             logger.info(f'Marking levels for full DAGs ...')
             if self.options.worker_number == 1:
                 # Single-process mode
-                StandardPreprocessor._mark_levels_by_chunk_((logicxs, self.options.level, self.options.worker_number))
+                StandardPreprocessor._mark_levels_by_chunk_((logicxs, self.options.level, 0))
             else:
                 # Multiple-process mode
                 chunk_number = self.options.worker_number * 4
                 logicxs_chunks = split_sequence(logicxs, chunk_number)
-                chunks = [(logicxs_chunk, self.options.level, self.options.worker_number) for i, logicxs_chunk in enumerate(logicxs_chunks)]
+                chunks = [(logicxs_chunk, self.options.level, i % self.options.worker_number) for i, logicxs_chunk in enumerate(logicxs_chunks)]
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                     logicxs = list()
                     for logicxs_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
