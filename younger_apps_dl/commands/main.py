@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 22:26:19
+# Last Modified time: 2026-01-21 22:27:28
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -123,7 +123,7 @@ def option(task_kind: str, task_name: str, toml_path: pathlib.Path, logging_file
         f'# It is recommended to replace the placeholders with actual values.\n'
         f'# Launch the Younger Apps DL with separate configuration file for a specific task step is more convenient and manageable.\n'
         f'# For example, you can create separate configuration files for training, evaluation, and prediction steps.\n'
-        f'# Run: younger apps dl launch --task-kind {task_kind} --task-name {task_name} --task-step <step> --toml-path <path_to_config_file_for_some_step>\n'
+        f'# Run: younger apps dl launch --task-kind {task_kind} --task-name {task_name} --task-step <step> --toml-path <path_to_config_file_at_step>\n\n'
     ) + helping
     toml_path.write_text(helping, encoding='utf-8')
     click.echo(f'Configuration template for "<{task_kind}> -> <{task_name}>" task has been written to the file - "{toml_path.absolute()}".')
