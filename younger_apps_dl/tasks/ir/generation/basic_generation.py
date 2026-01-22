@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 19:13:16
+# Last Modified time: 2026-01-21 20:12:49
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -117,43 +117,19 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
         Raises:
             ValueError: If required options are missing for the given stage.
         """
-        if stage == 'preprocess':
-            if self.options.preprocessor is None:
-                raise ValueError("preprocessor options are required for preprocessing stage")
 
-        elif stage == 'train':
-            if self.options.train_dataset is None:
-                raise ValueError("train_dataset options are required for training stage")
-            if self.options.valid_dataset is None:
-                raise ValueError("valid_dataset options are required for training stage")
-            if self.options.model is None:
-                raise ValueError("model options are required for training stage")
-            if self.options.optimizer is None:
-                raise ValueError("optimizer options are required for training stage")
-            if self.options.scheduler is None:
-                raise ValueError("scheduler options are required for training stage")
-            if self.options.trainer is None:
-                raise ValueError("trainer options are required for training stage")
+        # Define required options for each stage
+        REQUIRED_OPTION_NAMES_BY_STAGE = {
+            'preprocess': ['preprocessor'],
+            'train': ['train_dataset', 'valid_dataset', 'model', 'optimizer', 'scheduler', 'trainer'],
+            'evaluate': ['test_dataset', 'model', 'evaluator'],
+            'predict': ['predict_dataset', 'model', 'predictor'],
+            'postprocess': [],
+        }
 
-        elif stage == 'evaluate':
-            if self.options.test_dataset is None:
-                raise ValueError("test_dataset options are required for evaluation stage")
-            if self.options.model is None:
-                raise ValueError("model options are required for evaluation stage")
-            if self.options.evaluator is None:
-                raise ValueError("evaluator options are required for evaluation stage")
-
-        elif stage == 'predict':
-            if self.options.predict_dataset is None:
-                raise ValueError("predict_dataset options are required for prediction stage")
-            if self.options.model is None:
-                raise ValueError("model options are required for prediction stage")
-            if self.options.predictor is None:
-                raise ValueError("predictor options are required for prediction stage")
-
-        elif stage == 'postprocess':
-            # Currently no specific requirements for postprocess stage
-            pass
+        for required_option_name in REQUIRED_OPTION_NAMES_BY_STAGE[stage]:
+            if getattr(self.options, required_option_name) is None:
+                raise ValueError(f"{required_option_name} options are required for <{stage}> stage")
 
     def _preprocess_(self):
         preprocessor = StandardPreprocessor(self.options.preprocessor)
