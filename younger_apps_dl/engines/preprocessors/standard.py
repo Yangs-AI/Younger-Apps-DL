@@ -23,7 +23,7 @@ import networkx
 import collections
 import multiprocessing
 
-from typing import Any, Literal
+from typing import Any, Literal, Callable
 from pydantic import BaseModel, Field
 
 from younger.commons.io import save_json, save_pickle
@@ -32,6 +32,7 @@ from younger.commons.utils import split_sequence
 from younger_logics_ir.modules import LogicX
 
 from younger_apps_dl.commons.logging import logger
+from younger_apps_dl.commons.multiprocessing import ProgressMessage
 
 from younger_apps_dl.engines import BaseEngine, register_engine
 
@@ -85,7 +86,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
     OPTIONS = StandardPreprocessorOptions
 
     @staticmethod
-    def _load_logicx_by_chunk_(parameters: tuple[list[pathlib.Path], int, int, int, int | None, int | None]) -> tuple[list[LogicX], list[str], dict[str, dict[int, set[str]]], dict[str, dict[str, int]], dict[str, dict[int, list[str]]]]:
+    def _load_logicx_by_chunk_(parameters: tuple[list[pathlib.Path], int, int, Callable | None, int | None, int | None]) -> tuple[list[LogicX], list[str], dict[str, dict[int, set[str]]], dict[str, dict[str, int]], dict[str, dict[int, list[str]]]]:
         """
         Load and filter a chunk of LogicX files in parallel.
 
@@ -94,7 +95,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - logicx_filepaths: list of LogicX file paths to load
             - logicx_initial_index: starting index for logicx from origin this chunk
             - seed: random seed for deterministic behavior
-            - position: fixed progress bar slot assigned by parent
+            - progress_callback: callback function for progress reporting (or None for single-process)
             - min_dag_size: minimum DAG size filter
             - max_dag_size: maximum DAG size filter
 
@@ -105,7 +106,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - dict mapping logicx index to node index to node order
             - dict mapping logicx index to node order to list of node indices
         """
-        logicx_filepaths, logicx_initial_index, seed, position, min_dag_size, max_dag_size = parameters
+        logicx_filepaths, logicx_initial_index, seed, progress_callback, min_dag_size, max_dag_size = parameters
         random.seed(seed)
         numpy.random.seed(seed)
 
@@ -115,48 +116,57 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         all_nid2nod: dict[str, dict[str, int]] = dict() # {logicx_index: {node_index: order}}
         all_nod2nids: dict[str, dict[int, list[str]]] = dict() # {logicx_index: {order: list[node_index]}}
 
-        with tqdm.tqdm(total=len(logicx_filepaths), position=position, leave=False) as progress_bar:
-            logicx_index = logicx_initial_index
-            for logicx_filepath in logicx_filepaths:
-                progress_bar.update(1)
-                logicx = LogicX()
-                logicx.load(logicx_filepath)
+        # Initialize progress bar if callback is provided
+        if progress_callback:
+            progress_callback(ProgressMessage.Type.INIT, total=len(logicx_filepaths))
+        
+        logicx_index = logicx_initial_index
+        for logicx_filepath in logicx_filepaths:
+            if progress_callback:
+                progress_callback(ProgressMessage.Type.UPDATE, n=1)
+            
+            logicx = LogicX()
+            logicx.load(logicx_filepath)
 
-                dag_size = len(logicx.dag)
-                if min_dag_size is not None and dag_size < min_dag_size:
-                    continue
-                if max_dag_size is not None and dag_size > max_dag_size:
-                    continue
-                logicxs.append(logicx)
-                logicx_hashes.append(logicx_filepath.name)
+            dag_size = len(logicx.dag)
+            if min_dag_size is not None and dag_size < min_dag_size:
+                continue
+            if max_dag_size is not None and dag_size > max_dag_size:
+                continue
+            logicxs.append(logicx)
+            logicx_hashes.append(logicx_filepath.name)
 
-                # Generate UUID Positions
-                for node_index in logicx.dag.nodes:
-                    # Generate UUID Positions and Node Orders
-                    # {uuid: {logicx_index: set[node_index]}}
-                    # uuid is the operator type
-                    # logicx_index is the index of logicx in logicxs
-                    # node_index is the index of node in logicx.dag
-                    # e.g., {'uuid1': {0: {'n1', 'n2'}, 2: {'n3'}}, 'uuid2': {1: {'n4'}}}
-                    # Thus, uuid1 appears in logicx 0 at nodes n1 and n2, and in logicx 2 at node n3; uuid2 appears in logicx 1 at node n4.
-                    uuid = logicx.dag.nodes[node_index]['node_uuid']
-                    uuid_positions = all_uuid_positions.get(uuid, dict())
-                    node_indices = uuid_positions.get(logicx_index, set())
-                    node_indices.add(node_index)
-                    uuid_positions[logicx_index] = node_indices
-                    all_uuid_positions[uuid] = uuid_positions
+            # Generate UUID Positions
+            for node_index in logicx.dag.nodes:
+                # Generate UUID Positions and Node Orders
+                # {uuid: {logicx_index: set[node_index]}}
+                # uuid is the operator type
+                # logicx_index is the index of logicx in logicxs
+                # node_index is the index of node in logicx.dag
+                # e.g., {'uuid1': {0: {'n1', 'n2'}, 2: {'n3'}}, 'uuid2': {1: {'n4'}}}
+                # Thus, uuid1 appears in logicx 0 at nodes n1 and n2, and in logicx 2 at node n3; uuid2 appears in logicx 1 at node n4.
+                uuid = logicx.dag.nodes[node_index]['node_uuid']
+                uuid_positions = all_uuid_positions.get(uuid, dict())
+                node_indices = uuid_positions.get(logicx_index, set())
+                node_indices.add(node_index)
+                uuid_positions[logicx_index] = node_indices
+                all_uuid_positions[uuid] = uuid_positions
 
-                # From Topological Order, Generate Node Index to Node Order & Node Order to Node Indices
-                # Node Index: The Original Node Index in DAG
-                # Node Order: The Longest Path from Root to Node
-                all_nid2nod[logicx_index] = dict()
-                all_nod2nids[logicx_index] = dict()
-                for node_index in networkx.topological_sort(logicx.dag):
-                    predecessors = logicx.dag.predecessors(node_index)
-                    all_nid2nod[logicx_index][node_index] = max([all_nid2nod[logicx_index][predecessor] + 1 for predecessor in predecessors] + [0])
-                    all_nod2nids[logicx_index].setdefault(all_nid2nod[logicx_index][node_index], list()).append(node_index)
+            # From Topological Order, Generate Node Index to Node Order & Node Order to Node Indices
+            # Node Index: The Original Node Index in DAG
+            # Node Order: The Longest Path from Root to Node
+            all_nid2nod[logicx_index] = dict()
+            all_nod2nids[logicx_index] = dict()
+            for node_index in networkx.topological_sort(logicx.dag):
+                predecessors = logicx.dag.predecessors(node_index)
+                all_nid2nod[logicx_index][node_index] = max([all_nid2nod[logicx_index][predecessor] + 1 for predecessor in predecessors] + [0])
+                all_nod2nids[logicx_index].setdefault(all_nid2nod[logicx_index][node_index], list()).append(node_index)
 
-                logicx_index += 1
+            logicx_index += 1
+
+        # Close progress bar if callback is provided
+        if progress_callback:
+            progress_callback(ProgressMessage.Type.CLOSE)
 
         return logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids
 
@@ -167,7 +177,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             list[int], int, int, int,
             Literal['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window', 'MixBasic', 'MixSuper'] | None,
             dict[str, dict[str, int]], dict[str, dict[int, list[str]]],
-            bool, int, int
+            bool, int, Callable | None
         ]
     ) -> tuple[ str, dict[int, dict[str, LogicX]], dict[int, dict[str, list[str]]] ]:
         """Extract subgraphs for a single UUID across all split scales.
@@ -186,7 +196,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - all_nod2nids: node order to node indices mapping
             - level: whether to mark levels
             - seed: seed for randomization
-            - position: fixed progress bar slot assigned by parent
+            - progress_callback: callback function for progress reporting (or None for single-process)
 
         Returns:
             - tuple of (uuid, uuid_splits, uuid_split_hashes)
@@ -197,7 +207,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             split_scales, split_count, split_tries, split_limit,
             method,
             all_nid2nod, all_nod2nids,
-            level, seed, position
+            level, seed, progress_callback
         ) = parameters
 
         random.seed(seed)
@@ -206,77 +216,85 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         uuid_splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {split_hash: split}}
         uuid_split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {uuid: list[split_hash]}}
 
-        with tqdm.tqdm(total=len(split_scales), desc=f'UUID: {uuid[:8]}...', position=position, leave=False) as progress_bar:
-            # Single-process mode
-            # For Each Split Size:
-            for split_scale in split_scales:
-                # For Each Operator:
-                current_tries: int = 0
-                current_split_count: int = 0
-                candidate_logicx_indices: set[int] = set(uuid_positions.keys())
+        # Initialize progress bar if callback is provided
+        if progress_callback:
+            progress_callback(ProgressMessage.Type.INIT, total=len(split_scales), desc=f'UUID: {uuid[:8]}...')
+        
+        # For Each Split Size:
+        for split_scale in split_scales:
+            # For Each Operator:
+            current_tries: int = 0
+            current_split_count: int = 0
+            candidate_logicx_indices: set[int] = set(uuid_positions.keys())
 
-                # Generate Subgraph Split Repeatedly
-                while len(candidate_logicx_indices) != 0 and current_split_count < split_count:
-                    if not (current_tries < split_tries):
-                        break
+            # Generate Subgraph Split Repeatedly
+            while len(candidate_logicx_indices) != 0 and current_split_count < split_count:
+                if not (current_tries < split_tries):
+                    break
 
-                    selected_logicx_index: int = int(numpy.random.choice(list(candidate_logicx_indices)))
-                    selected_node_index: str = str(numpy.random.choice(list(uuid_positions[selected_logicx_index])))
+                selected_logicx_index: int = int(numpy.random.choice(list(candidate_logicx_indices)))
+                selected_node_index: str = str(numpy.random.choice(list(uuid_positions[selected_logicx_index])))
 
-                    active_method = method
-                    if method == 'MixBasic':
-                        active_method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull'])
-                    if method == 'MixSuper':
-                        active_method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window'])
+                active_method = method
+                if method == 'MixBasic':
+                    active_method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull'])
+                if method == 'MixSuper':
+                    active_method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window'])
 
-                    if active_method == 'Window':
-                        selected_node_order: int = all_nid2nod[selected_logicx_index][selected_node_index]
-                        if selected_node_order < split_scale - 1:
-                            continue
-                        selected_node_indices: list[int] = all_nod2nids[selected_logicx_index][selected_node_order]
-                        split = StandardPreprocessor.retrieve_split(
-                            logicxs[selected_logicx_index], selected_node_indices, 
-                            split_scale, split_limit, active_method
-                        )
-                        split_size = split_scale
-                    else:
-                        split = StandardPreprocessor.retrieve_split(
-                            logicxs[selected_logicx_index], [selected_node_index], 
-                            split_scale, split_limit, active_method
-                        )
-                        split_size = len(split.dag)
-
-                    if level:
-                        StandardPreprocessor.mark_node_levels(split.dag)
-                        split.dag.graph['level'] = True
-                    else:
-                        split.dag.graph['level'] = False
-
-                    current_tries += 1
-                    if split_size not in split_scales:
+                if active_method == 'Window':
+                    selected_node_order: int = all_nid2nod[selected_logicx_index][selected_node_index]
+                    if selected_node_order < split_scale - 1:
                         continue
-
-                    split_hash = LogicX.hash(split)
-                    if split_hash in uuid_splits[split_size]:
-                        continue
-
-                    split.dag.graph['origin'] = selected_logicx_index
-                    uuid_splits[split_size][split_hash] = split
-                    uuid_split_hashes[split_size].setdefault(uuid, list()).append(split_hash)
-                    current_split_count += 1
-
-                # Mark This LogicX as Exhausted if No More Splits Can Be Generated
-                if current_split_count < split_count:
-                    flag = f'No!'
+                    selected_node_indices: list[int] = all_nod2nids[selected_logicx_index][selected_node_order]
+                    split = StandardPreprocessor.retrieve_split(
+                        logicxs[selected_logicx_index], selected_node_indices, 
+                        split_scale, split_limit, active_method
+                    )
+                    split_size = split_scale
                 else:
-                    flag = f'Ye!'
-                progress_bar.set_description(f'Current: {uuid} Enough: ({flag})')
-                progress_bar.update(1)
+                    split = StandardPreprocessor.retrieve_split(
+                        logicxs[selected_logicx_index], [selected_node_index], 
+                        split_scale, split_limit, active_method
+                    )
+                    split_size = len(split.dag)
+
+                if level:
+                    StandardPreprocessor.mark_node_levels(split.dag)
+                    split.dag.graph['level'] = True
+                else:
+                    split.dag.graph['level'] = False
+
+                current_tries += 1
+                if split_size not in split_scales:
+                    continue
+
+                split_hash = LogicX.hash(split)
+                if split_hash in uuid_splits[split_size]:
+                    continue
+
+                split.dag.graph['origin'] = selected_logicx_index
+                uuid_splits[split_size][split_hash] = split
+                uuid_split_hashes[split_size].setdefault(uuid, list()).append(split_hash)
+                current_split_count += 1
+
+            # Mark This LogicX as Exhausted if No More Splits Can Be Generated
+            if current_split_count < split_count:
+                flag = f'No!'
+            else:
+                flag = f'Ye!'
+            
+            if progress_callback:
+                progress_callback(ProgressMessage.Type.SET_DESC, desc=f'Current: {uuid} Enough: ({flag})')
+                progress_callback(ProgressMessage.Type.UPDATE, n=1)
+
+        # Close progress bar if callback is provided
+        if progress_callback:
+            progress_callback(ProgressMessage.Type.CLOSE)
 
         return (uuid, uuid_splits, uuid_split_hashes)
 
     @staticmethod
-    def _mark_levels_by_chunk_(parameters: tuple[list[LogicX], bool, int]) -> list[LogicX]:
+    def _mark_levels_by_chunk_(parameters: tuple[list[LogicX], bool, Callable | None]) -> list[LogicX]:
         """
         Mark levels for a chunk of LogicX objects.
 
@@ -284,21 +302,163 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         parameters: tuple containing:
             - logicxs_chunk: list of LogicX objects to process
             - level_flag: whether to mark levels
-            - position: fixed progress bar slot assigned by parent
+            - progress_callback: callback function for progress reporting (or None for single-process)
 
         Returns:
             - list of processed LogicX objects
         """
-        logicxs_chunk, level_flag, position = parameters
-        with tqdm.tqdm(total=len(logicxs_chunk), desc='Marking levels', position=position, leave=False) as progress_bar:
-            for logicx in logicxs_chunk:
-                if level_flag:
-                    StandardPreprocessor.mark_node_levels(logicx.dag)
-                    logicx.dag.graph['level'] = True
-                else:
-                    logicx.dag.graph['level'] = False
-                progress_bar.update(1)
+        logicxs_chunk, level_flag, progress_callback = parameters
+        
+        # Initialize progress bar if callback is provided
+        if progress_callback:
+            progress_callback(ProgressMessage.Type.INIT, total=len(logicxs_chunk), desc='Marking levels')
+        
+        for logicx in logicxs_chunk:
+            if level_flag:
+                StandardPreprocessor.mark_node_levels(logicx.dag)
+                logicx.dag.graph['level'] = True
+            else:
+                logicx.dag.graph['level'] = False
+            
+            if progress_callback:
+                progress_callback(ProgressMessage.Type.UPDATE, n=1)
+        
+        # Close progress bar if callback is provided
+        if progress_callback:
+            progress_callback(ProgressMessage.Type.CLOSE)
+        
         return logicxs_chunk
+
+    @staticmethod
+    def _load_logicx_with_progress_wrapper(args_tuple):
+        """Wrapper for _load_logicx_by_chunk_ that handles progress queue communication."""
+        parameters, progress_queue, worker_id = args_tuple
+        
+        def progress_callback(msg_type: ProgressMessage.Type, **kwargs):
+            """Callback to send progress messages to the main process."""
+            progress_queue.put(ProgressMessage(msg_type, worker_id, **kwargs))
+        
+        # Unpack parameters and add progress callback
+        logicx_filepaths, logicx_initial_index, seed, _, min_dag_size, max_dag_size = parameters
+        new_parameters = (logicx_filepaths, logicx_initial_index, seed, progress_callback, min_dag_size, max_dag_size)
+        
+        return StandardPreprocessor._load_logicx_by_chunk_(new_parameters)
+    
+    @staticmethod
+    def _extract_subgraphs_with_progress_wrapper(args_tuple):
+        """Wrapper for _extract_subgraphs_for_uuid_ that handles progress queue communication."""
+        parameters, progress_queue, worker_id = args_tuple
+        
+        def progress_callback(msg_type: ProgressMessage.Type, **kwargs):
+            """Callback to send progress messages to the main process."""
+            progress_queue.put(ProgressMessage(msg_type, worker_id, **kwargs))
+        
+        # Unpack parameters and add progress callback
+        (uuid, uuid_positions, logicxs, split_scales, split_count, split_tries, split_limit,
+         method, all_nid2nod, all_nod2nids, level, seed, _) = parameters
+        new_parameters = (uuid, uuid_positions, logicxs, split_scales, split_count, split_tries, split_limit,
+                         method, all_nid2nod, all_nod2nids, level, seed, progress_callback)
+        
+        return StandardPreprocessor._extract_subgraphs_for_uuid_(new_parameters)
+    
+    @staticmethod
+    def _mark_levels_with_progress_wrapper(args_tuple):
+        """Wrapper for _mark_levels_by_chunk_ that handles progress queue communication."""
+        parameters, progress_queue, worker_id = args_tuple
+        
+        def progress_callback(msg_type: ProgressMessage.Type, **kwargs):
+            """Callback to send progress messages to the main process."""
+            progress_queue.put(ProgressMessage(msg_type, worker_id, **kwargs))
+        
+        # Unpack parameters and add progress callback
+        logicxs_chunk, level_flag, _ = parameters
+        new_parameters = (logicxs_chunk, level_flag, progress_callback)
+        
+        return StandardPreprocessor._mark_levels_by_chunk_(new_parameters)
+
+    def _run_with_progress_management(self, worker_wrapper, tasks, pool_method='imap'):
+        """
+        Helper method to run tasks with centralized progress bar management.
+        
+        Args:
+            worker_wrapper: Wrapper function that handles progress reporting
+            tasks: List of task parameters
+            pool_method: Pool method to use ('imap', 'imap_unordered', etc.)
+        
+        Returns:
+            List of results from worker function
+        """
+        # Create shared queue for progress messages
+        manager = multiprocessing.Manager()
+        progress_queue = manager.Queue()
+        
+        # Start progress listener in a separate thread
+        import threading
+        progress_bars = {}
+        listener_active = threading.Event()
+        listener_active.set()
+        
+        def progress_listener():
+            """Listen for progress messages and update progress bars."""
+            while listener_active.is_set() or not progress_queue.empty():
+                try:
+                    msg = progress_queue.get(timeout=0.1)
+                    
+                    if msg.type == ProgressMessage.Type.INIT:
+                        # Create a new progress bar at the specified position
+                        progress_bars[msg.worker_id] = tqdm.tqdm(
+                            position=msg.worker_id,
+                            leave=False,
+                            **msg.data
+                        )
+                    
+                    elif msg.type == ProgressMessage.Type.UPDATE:
+                        # Update existing progress bar
+                        if msg.worker_id in progress_bars:
+                            progress_bars[msg.worker_id].update(msg.data.get('n', 1))
+                    
+                    elif msg.type == ProgressMessage.Type.SET_DESC:
+                        # Set description for existing progress bar
+                        if msg.worker_id in progress_bars:
+                            progress_bars[msg.worker_id].set_description(msg.data.get('desc', ''))
+                    
+                    elif msg.type == ProgressMessage.Type.CLOSE:
+                        # Close and remove progress bar
+                        if msg.worker_id in progress_bars:
+                            progress_bars[msg.worker_id].close()
+                            del progress_bars[msg.worker_id]
+                
+                except:
+                    pass  # Timeout or empty queue
+        
+        listener_thread = threading.Thread(target=progress_listener)
+        listener_thread.start()
+        
+        try:
+            # Prepare tasks with progress queue and worker IDs
+            tasks_with_queue = [
+                (task, progress_queue, i % self.options.worker_number)
+                for i, task in enumerate(tasks)
+            ]
+            
+            # Run tasks in multiprocessing pool
+            with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                pool_func = getattr(pool, pool_method)
+                if pool_method in ('imap', 'imap_unordered'):
+                    results = list(pool_func(worker_wrapper, tasks_with_queue))
+                else:
+                    results = pool_func(worker_wrapper, tasks_with_queue)
+        
+        finally:
+            # Stop listener
+            listener_active.clear()
+            listener_thread.join()
+            
+            # Clean up any remaining progress bars
+            for progress_bar in progress_bars.values():
+                progress_bar.close()
+        
+        return results
 
     def run(self) -> None:
         random.seed(self.options.seed)
@@ -314,41 +474,46 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         logger.info(f'Using {self.options.worker_number} worker(s)')
 
         if self.options.worker_number == 1:
-            # Single-process mode
-            logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids = StandardPreprocessor._load_logicx_by_chunk_((logicx_filepaths, 0, self.options.seed, 0, self.options.min_dag_size, self.options.max_dag_size))
+            # Single-process mode - no progress callback needed
+            logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids = StandardPreprocessor._load_logicx_by_chunk_((logicx_filepaths, 0, self.options.seed, None, self.options.min_dag_size, self.options.max_dag_size))
         else:
-            # Multiple-process mode
+            # Multiple-process mode - use progress management
             chunk_number = self.options.worker_number * 4
             logicx_filepaths_chunks = split_sequence(logicx_filepaths, chunk_number)
             logicx_initial_indices = [0] + [
                 sum(len(logicx_filepath_chunk) for logicx_filepath_chunk in logicx_filepaths_chunks[:i]) for i in range(1, chunk_number)
             ]
             chunks = [(logicx_filepaths_chunk, logicx_initial_indices[i], self.options.seed, i % self.options.worker_number, self.options.min_dag_size, self.options.max_dag_size) for i, logicx_filepaths_chunk in enumerate(logicx_filepaths_chunks)]
+            
             logicxs: list[LogicX] = list()
             logicx_hashes: list[str] = list()
             all_uuid_positions: dict[str, dict[int, set[str]]] = dict()
             all_nid2nod: dict[str, dict[str, int]] = dict()
             all_nod2nids: dict[str, dict[int, list[str]]] = dict()
 
-            with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                # Merge results (no reindexing needed since _load_logicx_by_chunk_ uses global indices)
-                for result in pool.imap(StandardPreprocessor._load_logicx_by_chunk_, chunks):
-                    chunk_logicxs, chunk_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids = result
+            # Use the new progress management system
+            results = self._run_with_progress_management(
+                StandardPreprocessor._load_logicx_with_progress_wrapper,
+                chunks,
+                pool_method='imap'
+            )
+            
+            # Merge results (no reindexing needed since _load_logicx_by_chunk_ uses global indices)
+            for chunk_logicxs, chunk_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids in results:
+                # Direct merge for lists
+                logicxs.extend(chunk_logicxs)
+                logicx_hashes.extend(chunk_logicx_hashes)
 
-                    # Direct merge for lists
-                    logicxs.extend(chunk_logicxs)
-                    logicx_hashes.extend(chunk_logicx_hashes)
+                # Direct merge for dicts with non-conflicting keys (global indices)
+                all_nid2nod.update(chunk_all_nid2nod)
+                all_nod2nids.update(chunk_all_nod2nids)
 
-                    # Direct merge for dicts with non-conflicting keys (global indices)
-                    all_nid2nod.update(chunk_all_nid2nod)
-                    all_nod2nids.update(chunk_all_nod2nids)
-
-                    # Merge nested dict for all_uuid_positions (uuid -> logicx_index -> node_indices)
-                    for uuid, positions in chunk_all_uuid_positions.items():
-                        if uuid in all_uuid_positions:
-                            all_uuid_positions[uuid].update(positions)
-                        else:
-                            all_uuid_positions[uuid] = positions
+                # Merge nested dict for all_uuid_positions (uuid -> logicx_index -> node_indices)
+                for uuid, positions in chunk_all_uuid_positions.items():
+                    if uuid in all_uuid_positions:
+                        all_uuid_positions[uuid].update(positions)
+                    else:
+                        all_uuid_positions[uuid] = positions
 
         logger.info(f'Loaded {len(logicxs)} DAGs matching size criteria.')
 
@@ -394,20 +559,23 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
                     self.options.method,
                     all_nid2nod, all_nod2nids,
-                    self.options.level, self.options.seed, i % self.options.worker_number
+                    self.options.level, self.options.seed, None  # None for progress_callback in single-process or will be replaced in multi-process
                 )
                 for i, (uuid, uuid_positions) in enumerate(all_uuid_positions.items())
             ]
 
             if self.options.worker_number == 1:
-                # Single-process mode: execute tasks sequentially
+                # Single-process mode: execute tasks sequentially without progress callback
                 logger.info(f'Processing Subgraph Extraction Sequentially...')
                 results = [StandardPreprocessor._extract_subgraphs_for_uuid_(task) for task in tasks]
             else:
-                # Multiple-process mode: execute tasks in parallel
+                # Multiple-process mode: execute tasks in parallel with progress management
                 logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
-                with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                    results = list(pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks))
+                results = self._run_with_progress_management(
+                    StandardPreprocessor._extract_subgraphs_with_progress_wrapper,
+                    tasks,
+                    pool_method='imap_unordered'
+                )
             logger.info(f'Subgraph Extraction Completed.')
 
             # Merge Results and Restore Origin Hashes (Common for Both Modes)
@@ -431,17 +599,23 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             # Full DAG Mode: Use Full DAGs Directly Without Subgraph Extraction
             logger.info(f'Marking levels for full DAGs ...')
             if self.options.worker_number == 1:
-                # Single-process mode
-                StandardPreprocessor._mark_levels_by_chunk_((logicxs, self.options.level, 0))
+                # Single-process mode - no progress callback
+                StandardPreprocessor._mark_levels_by_chunk_((logicxs, self.options.level, None))
             else:
-                # Multiple-process mode
+                # Multiple-process mode - use progress management
                 chunk_number = self.options.worker_number * 4
                 logicxs_chunks = split_sequence(logicxs, chunk_number)
                 chunks = [(logicxs_chunk, self.options.level, i % self.options.worker_number) for i, logicxs_chunk in enumerate(logicxs_chunks)]
-                with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                    logicxs = list()
-                    for logicxs_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
-                        logicxs.extend(logicxs_chunk)
+                
+                results = self._run_with_progress_management(
+                    StandardPreprocessor._mark_levels_with_progress_wrapper,
+                    chunks,
+                    pool_method='imap'
+                )
+                
+                logicxs = list()
+                for logicxs_chunk in results:
+                    logicxs.extend(logicxs_chunk)
 
             items_with_hashes = [(logicx_hash, logicx) for logicx_hash, logicx in zip(logicx_hashes, logicxs)]
 
