@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 22:58:52
+# Last Modified time: 2026-01-21 20:45:38
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -67,30 +67,41 @@ class BasicNodeClassificationOptions(BaseModel):
     mask_ratio: float = Field(..., description='Ratio of edges to mask for self-supervised learning (0.0 to 1.0). (1 - mask_ratio) * num_edge edges are kept as prior knowledge.')
     sample_ratio: float = Field(..., description='Ratio of positive and negative samples to generate for the masked edges (0.0 to 1.0). 2 * sample_ratio * mask_ratio * num_edge edges are generated as samples.')
 
-    trainer: StandardTrainerOptions
-    evaluator: StandardEvaluatorOptions
-    preprocessor: StandardPreprocessorOptions
-    predictor: StandardPredictorOptions
+    # Stage-specific options
+    trainer: StandardTrainerOptions | None = Field(None, description='Trainer options, required for training stage.')
+    evaluator: StandardEvaluatorOptions | None = Field(None, description='Evaluator options, required for evaluation stage.')
+    preprocessor: StandardPreprocessorOptions | None = Field(None, description='Preprocessor options, required for preprocessing stage.')
+    predictor: StandardPredictorOptions | None = Field(None, description='Predictor options, required for prediction stage.')
 
-    train_dataset: DatasetOptions
-    valid_dataset: DatasetOptions
-    test_dataset: DatasetOptions
-    predict_dataset: DatasetOptions
+    train_dataset: DatasetOptions | None = Field(None, description='Training dataset options, required for training stage.')
+    valid_dataset: DatasetOptions | None = Field(None, description='Validation dataset options, required for training stage.')
+    test_dataset: DatasetOptions | None = Field(None, description='Test dataset options, required for evaluation stage.')
+    predict_dataset: DatasetOptions | None = Field(None, description='Prediction dataset options, required for prediction stage.')
 
-    model: ModelOptions
-    optimizer: OptimizerOptions
-    scheduler: SchedulerOptions
+    model: ModelOptions | None = Field(None, description='Model options, required for training/evaluation/prediction stages.')
+    optimizer: OptimizerOptions | None = Field(None, description='Optimizer options, required for training stage.')
+    scheduler: SchedulerOptions | None = Field(None, description='Scheduler options, required for training stage.')
 
 
 @register_task('ir', 'basic_edge_classification')
 class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
     OPTIONS = BasicNodeClassificationOptions
 
-    def preprocess(self):
+    @property
+    def required_option_names_by_stage(self) -> dict[str, list[str]]:
+        return {
+            'preprocess': ['preprocessor'],
+            'train': ['train_dataset', 'valid_dataset', 'model', 'optimizer', 'scheduler', 'trainer'],
+            'evaluate': ['test_dataset', 'model', 'evaluator'],
+            'predict': ['predict_dataset', 'model', 'predictor'],
+            'postprocess': [],
+        }
+
+    def _preprocess_(self):
         preprocessor = StandardPreprocessor(self.options.preprocessor)
         preprocessor.run()
 
-    def train(self):
+    def _train_(self):
         self.train_dataset = self._build_dataset_(
             self.options.train_dataset.meta_filepath,
             self.options.train_dataset.raw_dirpath,
@@ -144,7 +155,7 @@ class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
             dataloader_type='pyg',
         )
 
-    def evaluate(self):
+    def _evaluate_(self):
         self.test_dataset = self._build_dataset_(
             self.options.test_dataset.meta_filepath,
             self.options.test_dataset.raw_dirpath,
@@ -171,6 +182,14 @@ class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
             initialize_fn=self._initialize_fn_,
             dataloader_type='pyg'
         )
+
+    def _predict_(self):
+        """Predict implementation (currently not used in this task)."""
+        raise NotImplementedError("Prediction is not implemented for BasicEdgeClassification task")
+
+    def _postprocess_(self):
+        """Postprocess implementation (currently not used in this task)."""
+        raise NotImplementedError("Postprocessing is not implemented for BasicEdgeClassification task")
 
     @overload
     def _build_model_(

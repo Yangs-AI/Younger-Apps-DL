@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 20:12:49
+# Last Modified time: 2026-01-21 20:51:55
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -108,28 +108,15 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
     """
     OPTIONS = BasicGenerationOptions
 
-    def _check_options_(self, stage: Literal['preprocess', 'train', 'evaluate', 'predict', 'postprocess']) -> None:
-        """Check if required options are provided for the given stage.
-
-        Args:
-            stage: The stage to check options for.
-
-        Raises:
-            ValueError: If required options are missing for the given stage.
-        """
-
-        # Define required options for each stage
-        REQUIRED_OPTION_NAMES_BY_STAGE = {
+    @property
+    def required_option_names_by_stage(self) -> dict[str, list[str]]:
+        return {
             'preprocess': ['preprocessor'],
             'train': ['train_dataset', 'valid_dataset', 'model', 'optimizer', 'scheduler', 'trainer'],
             'evaluate': ['test_dataset', 'model', 'evaluator'],
             'predict': ['predict_dataset', 'model', 'predictor'],
             'postprocess': [],
         }
-
-        for required_option_name in REQUIRED_OPTION_NAMES_BY_STAGE[stage]:
-            if getattr(self.options, required_option_name) is None:
-                raise ValueError(f"{required_option_name} options are required for <{stage}> stage")
 
     def _preprocess_(self):
         preprocessor = StandardPreprocessor(self.options.preprocessor)

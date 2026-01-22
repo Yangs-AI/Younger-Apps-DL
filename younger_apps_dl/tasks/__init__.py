@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 19:11:01
+# Last Modified time: 2026-01-21 20:52:53
 # Copyright (c) 2024 - 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -24,17 +24,17 @@ class BaseTask(OptionsMixin[OPTIONS_TYPE], ABC):
     def __init__(self, options: OPTIONS_TYPE):
         super().__init__(options)
 
+    @property
     @abstractmethod
-    def _check_options_(self, stage: Literal['preprocess', 'train', 'evaluate', 'predict', 'postprocess']) -> None:
-        """Check if required options are provided for the given stage.
-
-        Args:
-            stage: The stage to check options for.
-
-        Raises:
-            ValueError: If required options are missing for the given stage.
-        """
+    def required_option_names_by_stage(self) -> dict[str, list[str]]:
+        """Mapping from stage name to list of required option field names."""
         raise NotImplementedError
+
+    def _check_options_(self, stage: Literal['preprocess', 'train', 'evaluate', 'predict', 'postprocess']) -> None:
+        """Check if required options are provided for the given stage."""
+        for required_option_name in self.required_option_names_by_stage.get(stage, []):
+            if getattr(self.options, required_option_name, None) is None:
+                raise ValueError(f"{required_option_name} option is required for {stage} stage")
 
     def preprocess(self):
         """Preprocess data. Automatically checks requirements before execution."""

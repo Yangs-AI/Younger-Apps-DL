@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-16 11:51:31
+# Last Modified time: 2026-01-21 20:47:15
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -66,19 +66,20 @@ class DatasetOptions(BaseModel):
 class BasicPerformancePredictionOptions(BaseModel):
     # Main Options
 
-    trainer: StandardTrainerOptions
-    evaluator: StandardEvaluatorOptions
-    preprocessor: StandardPreprocessorOptions
-    predictor: StandardPredictorOptions
+    # Stage-specific options
+    trainer: StandardTrainerOptions | None = Field(None, description='Trainer options, required for training stage.')
+    evaluator: StandardEvaluatorOptions | None = Field(None, description='Evaluator options, required for evaluation stage.')
+    preprocessor: StandardPreprocessorOptions | None = Field(None, description='Preprocessor options, required for preprocessing stage.')
+    predictor: StandardPredictorOptions | None = Field(None, description='Predictor options, required for prediction stage.')
 
-    train_dataset: DatasetOptions
-    valid_dataset: DatasetOptions
-    test_dataset: DatasetOptions
-    predict_dataset: DatasetOptions
+    train_dataset: DatasetOptions | None = Field(None, description='Training dataset options, required for training stage.')
+    valid_dataset: DatasetOptions | None = Field(None, description='Validation dataset options, required for training stage.')
+    test_dataset: DatasetOptions | None = Field(None, description='Test dataset options, required for evaluation stage.')
+    predict_dataset: DatasetOptions | None = Field(None, description='Prediction dataset options, required for prediction stage.')
 
-    model: ModelOptions
-    optimizer: OptimizerOptions
-    scheduler: SchedulerOptions
+    model: ModelOptions | None = Field(None, description='Model options, required for training/evaluation/prediction stages.')
+    optimizer: OptimizerOptions | None = Field(None, description='Optimizer options, required for training stage.')
+    scheduler: SchedulerOptions | None = Field(None, description='Scheduler options, required for training stage.')
 
 
 # Self-Supervised Learning for Node Prediction
@@ -94,11 +95,21 @@ class BasicPerformancePrediction(BaseTask[BasicPerformancePredictionOptions]):
     """
     OPTIONS = BasicPerformancePredictionOptions
 
-    def preprocess(self):
+    @property
+    def required_option_names_by_stage(self) -> dict[str, list[str]]:
+        return {
+            'preprocess': ['preprocessor'],
+            'train': ['train_dataset', 'valid_dataset', 'model', 'optimizer', 'scheduler', 'trainer'],
+            'evaluate': ['test_dataset', 'model', 'evaluator'],
+            'predict': ['predict_dataset', 'model', 'predictor'],
+            'postprocess': [],
+        }
+
+    def _preprocess_(self):
         preprocessor = StandardPreprocessor(self.options.preprocessor)
         preprocessor.run()
 
-    def train(self):
+    def _train_(self):
         assert self.options.model.output_dim == len(self.options.train_dataset.label_keys), f"Model output_dim ({self.options.model.output_dim}) must match the number of label keys ({len(self.options.train_dataset.label_keys)}) in the training dataset."
 
         self.train_dataset = self._build_dataset_(
@@ -160,7 +171,7 @@ class BasicPerformancePrediction(BaseTask[BasicPerformancePredictionOptions]):
             dataloader_type='pyg',
         )
 
-    def evaluate(self):
+    def _evaluate_(self):
         self.test_dataset = self._build_dataset_(
             self.options.test_dataset.meta_filepath,
             self.options.test_dataset.raw_dirpath,
@@ -190,6 +201,14 @@ class BasicPerformancePrediction(BaseTask[BasicPerformancePredictionOptions]):
             initialize_fn=self._initialize_fn_,
             dataloader_type='pyg'
         )
+
+    def _predict_(self):
+        """Predict implementation (currently not used in this task)."""
+        raise NotImplementedError("Prediction is not implemented for BasicPerformancePrediction task")
+
+    def _postprocess_(self):
+        """Postprocess implementation (currently not used in this task)."""
+        raise NotImplementedError("Postprocessing is not implemented for BasicPerformancePrediction task")
 
     @overload
     def _build_model_(
