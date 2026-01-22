@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-14 09:19:14
+# Last Modified time: 2026-01-21 19:38:32
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -58,26 +58,28 @@ def is_none_type(data_type: type):
 
 
 def get_placeholder(data_type: type | None):
+    """Generate TOML-compatible placeholder for given type.
+
+    All placeholders are wrapped in quotes to ensure valid TOML syntax.
+    This allows the template to be loaded without syntax errors.
+    Users should replace these with actual values.
+    """
     if is_str_type(data_type):
         return '"<str>"'
     if is_int_type(data_type):
-        return '<int>'
+        return '"<int>"'  # Quoted to ensure valid TOML syntax
     if is_float_type(data_type):
-        return '<float>'
+        return '"<float>"'  # Quoted to ensure valid TOML syntax
     if is_bool_type(data_type):
-        return '<bool>'
-    if is_any_type(data_type):
-        return '<Any>'
-    if is_none_type(data_type):
-        return '<None>'
+        return '"<bool>"'  # Quoted to ensure valid TOML syntax
 
     if data_type is None:
-        return '<unknown>'
+        return '"<unknown>"'
 
     if get_origin(data_type) is not None:
-        return '<generic>'
+        return '"<generic>"'
 
-    return f'<{getattr(data_type, "__name__", "sepcial")}>'
+    return f'"<{getattr(data_type, "__name__", "special")}>"'
 
 
 def generate_helping_for_pydantic_model(pydantic_model: Type[BaseModel], location: str = '') -> list[str]:
@@ -129,7 +131,13 @@ def generate_helping_for_pydantic_model(pydantic_model: Type[BaseModel], locatio
     toml_lines.extend(global_fields)
 
     for index, (kind, name, field_type) in enumerate(nested_fields):
-        toml_lines.append(f'\n# Nested Fields {index}')
+        # Get description for the field
+        field_description = pydantic_model.model_fields[name].description
+        description_comment = f'# {field_description}' if field_description is not None else f'# {name}'
+
+        toml_lines.append('')  # Empty line for readability
+        toml_lines.append(description_comment)
+
         if kind == 'model_self':
             section_name = f'{location + "." if location else ""}{name}'
             toml_lines.append(f'[{section_name}]')
