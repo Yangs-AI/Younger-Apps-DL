@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-22 06:07:21
+# Last Modified time: 2026-01-22 06:11:12
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -85,7 +85,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
     OPTIONS = StandardPreprocessorOptions
 
     @staticmethod
-    def _load_logicx_by_chunk_(parameters: tuple[list[pathlib.Path], int, int, int, int | None, int | None]) -> tuple[list[LogicX], list[str], dict[str, dict[int, set[str]]], dict[str, dict[str, int]], dict[str, dict[int, list[str]]]]:
+    def _load_logicx_by_chunk_(parameters: tuple[list[pathlib.Path], int, int, int | None, int | None]) -> tuple[list[LogicX], list[str], dict[str, dict[int, set[str]]], dict[str, dict[str, int]], dict[str, dict[int, list[str]]]]:
         """
         Load and filter a chunk of LogicX files in parallel.
 
@@ -94,7 +94,6 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - logicx_filepaths: list of LogicX file paths to load
             - logicx_initial_index: starting index for logicx from origin this chunk
             - seed: random seed for deterministic behavior
-            - worker_index: index of the worker process (for position of progress bar)
             - min_dag_size: minimum DAG size filter
             - max_dag_size: maximum DAG size filter
 
@@ -105,7 +104,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - dict mapping logicx index to node index to node order
             - dict mapping logicx index to node order to list of node indices
         """
-        logicx_filepaths, logicx_initial_index, seed, worker_index, min_dag_size, max_dag_size = parameters
+        logicx_filepaths, logicx_initial_index, seed, min_dag_size, max_dag_size = parameters
         random.seed(seed)
         numpy.random.seed(seed)
 
@@ -115,7 +114,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         all_nid2nod: dict[str, dict[str, int]] = dict() # {logicx_index: {node_index: order}}
         all_nod2nids: dict[str, dict[int, list[str]]] = dict() # {logicx_index: {order: list[node_index]}}
 
-        with tqdm.tqdm(total=len(logicx_filepaths), position=worker_index) as progress_bar:
+        with tqdm.tqdm(total=len(logicx_filepaths), leave=False) as progress_bar:
             logicx_index = logicx_initial_index
             for logicx_filepath in logicx_filepaths:
                 progress_bar.update(1)
