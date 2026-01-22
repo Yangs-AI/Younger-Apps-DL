@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-22 05:38:14
+# Last Modified time: 2026-01-22 06:07:21
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -51,7 +51,7 @@ class StandardPreprocessorOptions(BaseModel):
                                                                                                '\'RandomFull\' is similar, but retains all nodes at each BFS depth. '
                                                                                                '\'Cascade\' restricts the expansion to ancestors or descendants of the center node, retaining a random subset at each depth. '
                                                                                                '\'CascadeFull\' is the full-retention version of \'Cascade\', preserving all nodes at each BFS depth.'
-                                                                                               '\'Window\' randomly selects a graph and identifies nodes at a specific level; then performs a `split_scale`-step backward traversal, incorporating all traversed nodes and edges into the subgraph.'
+                                                                                               '\'Window\' randomly selects a graph and identifies nodes at a specific level; then performs a `split_scales`-step backward traversal, incorporating all traversed nodes and edges into the subgraph.'
                                                                                                '\'MixBasic\' uniformly samples one of the following methods for each subgraph: \'Random\', \'RandomFull\', \'Cascade\', or \'CascadeFull\'. '
                                                                                                '\'MixSuper\' extends MixBasic by additionally including \'Window\' in the set of candidate methods, sampling uniformly among all five.')
 
@@ -167,7 +167,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             list[int], int, int, int,
             Literal['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window', 'MixBasic', 'MixSuper'] | None,
             dict[str, dict[str, int]], dict[str, dict[int, list[str]]],
-            bool, int, int
+            bool, int
         ]
     ) -> tuple[ str, dict[int, dict[str, LogicX]], dict[int, dict[str, list[str]]] ]:
         """Extract subgraphs for a single UUID across all split scales.
@@ -186,7 +186,6 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - all_nod2nids: node order to node indices mapping
             - level: whether to mark levels
             - seed: seed for randomization
-            - worker_index: index of worker process (for position of progress bar)
 
         Returns:
             - tuple of (uuid, uuid_splits, uuid_split_hashes)
@@ -197,7 +196,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             split_scales, split_count, split_tries, split_limit,
             method,
             all_nid2nod, all_nod2nids,
-            level, seed, worker_index
+            level, seed
         ) = parameters
 
         random.seed(seed)
@@ -206,7 +205,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         uuid_splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {split_hash: split}}
         uuid_split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {uuid: list[split_hash]}}
 
-        with tqdm.tqdm(total=len(split_scales), position=worker_index, desc=f'UUID: ') as progress_bar:
+        with tqdm.tqdm(total=len(split_scales), desc=f'UUID: {uuid[:8]}...', leave=False) as progress_bar:
             # Single-process mode
             # For Each Split Size:
             for split_scale in split_scales:
@@ -276,7 +275,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         return (uuid, uuid_splits, uuid_split_hashes)
 
     @staticmethod
-    def _mark_levels_by_chunk_(parameters: tuple[list[LogicX], bool, int]) -> list[LogicX]:
+    def _mark_levels_by_chunk_(parameters: tuple[list[LogicX], bool]) -> list[LogicX]:
         """
         Mark levels for a chunk of LogicX objects.
 
@@ -284,13 +283,12 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         parameters: tuple containing:
             - logicxs_chunk: list of LogicX objects to process
             - level_flag: whether to mark levels
-            - worker_index: index of the worker process (for position of progress bar)
 
         Returns:
             - list of processed LogicX objects
         """
-        logicxs_chunk, level_flag, worker_index = parameters
-        with tqdm.tqdm(total=len(logicxs_chunk), position=worker_index) as progress_bar:
+        logicxs_chunk, level_flag = parameters
+        with tqdm.tqdm(total=len(logicxs_chunk), desc='Marking levels', leave=False) as progress_bar:
             for logicx in logicxs_chunk:
                 if level_flag:
                     StandardPreprocessor.mark_node_levels(logicx.dag)
@@ -315,7 +313,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
         if self.options.worker_number == 1:
             # Single-process mode
-            logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids = StandardPreprocessor._load_logicx_by_chunk_(logicx_filepaths, 0, self.options.seed, 0, self.options.min_dag_size, self.options.max_dag_size)
+            logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids = StandardPreprocessor._load_logicx_by_chunk_((logicx_filepaths, 0, self.options.seed, self.options.min_dag_size, self.options.max_dag_size))
         else:
             # Multiple-process mode
             chunk_number = self.options.worker_number * 4
@@ -323,7 +321,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             logicx_initial_indices = [0] + [
                 sum(len(logicx_filepath_chunk) for logicx_filepath_chunk in logicx_filepaths_chunks[:i]) for i in range(1, chunk_number)
             ]
-            chunks = [(logicx_filepaths_chunk, logicx_initial_indices[i], self.options.seed, i, self.options.min_dag_size, self.options.max_dag_size) for i, logicx_filepaths_chunk in enumerate(logicx_filepaths_chunks)]
+            chunks = [(logicx_filepaths_chunk, logicx_initial_indices[i], self.options.seed, self.options.min_dag_size, self.options.max_dag_size) for i, logicx_filepaths_chunk in enumerate(logicx_filepaths_chunks)]
             logicxs: list[LogicX] = list()
             logicx_hashes: list[str] = list()
             all_uuid_positions: dict[str, dict[int, set[str]]] = dict()
@@ -374,7 +372,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             # The actual number of splits will be determined during the splitting process.
             # Finally, the Training/Validation/Test Dataset Sizes Are Capped By The Estimated Overall Number Of Splits.
             # Note: Validation and Test sizes may be zero if the estimated overall number of splits is less than or equal to the training size.
-            expected_overall_split_count = len(uuid_occurrence)*len(self.options.split_scale)*min(self.options.split_count, self.options.split_tries)
+            expected_overall_split_count = len(uuid_occurrence)*len(self.options.split_scales)*min(self.options.split_count, self.options.split_tries)
             expected_training_dataset_size = min(expected_overall_split_count, self.options.training_dataset_size)
             expected_validation_dataset_size = min(max(0, expected_overall_split_count-self.options.training_dataset_size), self.options.validation_dataset_size)
             expected_test_dataset_size = min(max(0, expected_overall_split_count-self.options.training_dataset_size-self.options.validation_dataset_size), self.options.test_dataset_size)
@@ -383,8 +381,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
             # For Each Split Size, For Each Operator, Generate Specific Number of Subgraph Splits
             logger.info(f'Splitting ...')
-            splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in self.options.split_scale} # {split_scale: {split_hash: split}}
-            split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in self.options.split_scale} # {split_scale: {uuid: list[split_hash]}}
+            splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {split_hash: split}}
+            split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {uuid: list[split_hash]}}
 
             # Build tasks for all UUIDs (used in both single and multi-process modes)
             tasks = [
@@ -394,9 +392,9 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
                     self.options.method,
                     all_nid2nod, all_nod2nids,
-                    self.options.level, self.options.seed, i
+                    self.options.level, self.options.seed
                 )
-                for i, (uuid, uuid_positions) in enumerate(all_uuid_positions.items())
+                for uuid, uuid_positions in all_uuid_positions.items()
             ]
 
             if self.options.worker_number == 1:
@@ -432,12 +430,12 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             logger.info(f'Marking levels for full DAGs ...')
             if self.options.worker_number == 1:
                 # Single-process mode
-                StandardPreprocessor._mark_levels_by_chunk_((logicxs, self.options.level, 0))
+                StandardPreprocessor._mark_levels_by_chunk_((logicxs, self.options.level))
             else:
                 # Multiple-process mode
                 chunk_number = self.options.worker_number * 4
                 logicxs_chunks = split_sequence(logicxs, chunk_number)
-                chunks = [(logicxs_chunk, self.options.level, i) for i, logicxs_chunk in enumerate(logicxs_chunks)]
+                chunks = [(logicxs_chunk, self.options.level) for logicxs_chunk in logicxs_chunks]
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                     logicxs = list()
                     for logicxs_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
