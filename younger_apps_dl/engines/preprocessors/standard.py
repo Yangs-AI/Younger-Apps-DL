@@ -428,7 +428,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                             progress_bars[msg.worker_id].close()
                             del progress_bars[msg.worker_id]
                 
-                except:
+                except Exception:
                     pass  # Timeout or empty queue
         
         listener_thread = threading.Thread(target=progress_listener)
@@ -436,6 +436,11 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         
         try:
             # Prepare tasks with progress queue and worker IDs
+            # Note: Worker IDs are assigned as (i % worker_number) to distribute tasks across available positions.
+            # This works correctly with imap/imap_unordered because:
+            # 1. Each worker processes tasks sequentially, not concurrently
+            # 2. Progress bars are properly closed (CLOSE message) before the next task starts
+            # 3. Multiple tasks with the same worker_id will never be active simultaneously
             tasks_with_queue = [
                 (task, progress_queue, i % self.options.worker_number)
                 for i, task in enumerate(tasks)

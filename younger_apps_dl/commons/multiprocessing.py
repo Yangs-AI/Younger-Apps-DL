@@ -13,6 +13,64 @@
 # LICENSE file in the root directory of this source tree.
 ########################################################################
 
+"""
+Multiprocessing Progress Management Utilities
+
+This module provides utilities for managing progress bars in multiprocessing contexts
+using message queues. This approach centralizes progress bar control in the main process,
+preventing position conflicts and display issues that can occur when multiple subprocess
+workers try to manage their own progress bars.
+
+Key Features:
+- Centralized progress bar management via message queues
+- Support for multiple concurrent progress bars with position management
+- Clean API for subprocess workers to report progress
+- Thread-safe progress bar updates from multiple workers
+- Reusable components for any multiprocessing workflow with progress reporting
+
+Usage Pattern:
+1. Worker functions use a progress_callback to send progress messages
+2. Progress messages are sent via a shared Queue to the main process
+3. A listener thread in the main process receives messages and updates tqdm progress bars
+4. Each worker is assigned a position to avoid progress bar conflicts
+
+Example:
+    ```python
+    from younger_apps_dl.commons.multiprocessing import ProgressMessage
+    
+    def worker_func(parameters, progress_callback):
+        # Initialize progress bar
+        if progress_callback:
+            progress_callback(ProgressMessage.Type.INIT, total=100, desc="Processing")
+        
+        for i in range(100):
+            # Do work...
+            
+            # Update progress
+            if progress_callback:
+                progress_callback(ProgressMessage.Type.UPDATE, n=1)
+        
+        # Close progress bar
+        if progress_callback:
+            progress_callback(ProgressMessage.Type.CLOSE)
+        
+        return result
+    
+    # In main process:
+    # Create wrapper that handles progress queue communication
+    def wrapper(args_tuple):
+        parameters, progress_queue, worker_id = args_tuple
+        
+        def progress_callback(msg_type, **kwargs):
+            progress_queue.put(ProgressMessage(msg_type, worker_id, **kwargs))
+        
+        return worker_func(parameters, progress_callback)
+    
+    # Use with multiprocessing
+    # (See _run_with_progress_management in standard.py for full example)
+    ```
+"""
+
 
 import tqdm
 import multiprocessing
@@ -33,179 +91,3 @@ class ProgressMessage:
         self.type = msg_type
         self.worker_id = worker_id
         self.data = kwargs
-
-
-class MultiprocessProgressManager:
-    """
-    Manager for controlling progress bars in multiprocessing contexts.
-    
-    Uses message queues to centralize progress bar management in the main process,
-    preventing position conflicts and display issues.
-    
-    Example:
-        ```python
-        def worker_func(task_data, progress_queue, worker_id):
-            # Initialize progress bar
-            progress_queue.put(ProgressMessage(
-                ProgressMessage.Type.INIT,
-                worker_id,
-                total=100,
-                desc=f"Worker {worker_id}"
-            ))
-            
-            for i in range(100):
-                # Do work...
-                
-                # Update progress
-                progress_queue.put(ProgressMessage(
-                    ProgressMessage.Type.UPDATE,
-                    worker_id,
-                    n=1
-                ))
-            
-            # Close progress bar
-            progress_queue.put(ProgressMessage(
-                ProgressMessage.Type.CLOSE,
-                worker_id
-            ))
-            
-            return result
-        
-        # Use the manager
-        manager = MultiprocessProgressManager(num_workers=4)
-        results = manager.run_with_progress(
-            worker_func,
-            tasks,
-            num_workers=4
-        )
-        ```
-    """
-    
-    def __init__(self, num_workers: int):
-        """
-        Initialize the progress manager.
-        
-        Args:
-            num_workers: Number of worker processes
-        """
-        self.num_workers = num_workers
-        self.progress_queue = None
-        self.progress_bars = {}
-    
-    def _progress_listener(self):
-        """Listen for progress messages and update progress bars accordingly."""
-        while True:
-            msg = self.progress_queue.get()
-            
-            if msg is None:  # Poison pill to stop the listener
-                break
-            
-            if msg.type == ProgressMessage.Type.INIT:
-                # Create a new progress bar at the specified position
-                self.progress_bars[msg.worker_id] = tqdm.tqdm(
-                    position=msg.worker_id,
-                    leave=False,
-                    **msg.data
-                )
-            
-            elif msg.type == ProgressMessage.Type.UPDATE:
-                # Update existing progress bar
-                if msg.worker_id in self.progress_bars:
-                    self.progress_bars[msg.worker_id].update(msg.data.get('n', 1))
-            
-            elif msg.type == ProgressMessage.Type.SET_DESC:
-                # Set description for existing progress bar
-                if msg.worker_id in self.progress_bars:
-                    self.progress_bars[msg.worker_id].set_description(msg.data.get('desc', ''))
-            
-            elif msg.type == ProgressMessage.Type.CLOSE:
-                # Close and remove progress bar
-                if msg.worker_id in self.progress_bars:
-                    self.progress_bars[msg.worker_id].close()
-                    del self.progress_bars[msg.worker_id]
-    
-    def _cleanup_progress_bars(self):
-        """Clean up any remaining progress bars."""
-        for progress_bar in self.progress_bars.values():
-            progress_bar.close()
-        self.progress_bars.clear()
-    
-    def run_with_progress(
-        self,
-        worker_func: Callable,
-        tasks: list[Any],
-        pool_method: str = 'imap',
-        **pool_kwargs
-    ) -> list[Any]:
-        """
-        Run tasks with centralized progress bar management.
-        
-        Args:
-            worker_func: Worker function that accepts (task_data, progress_queue, worker_id)
-            tasks: List of tasks to process
-            pool_method: Pool method to use ('imap', 'imap_unordered', 'map', etc.)
-            **pool_kwargs: Additional keyword arguments for Pool
-        
-        Returns:
-            List of results from worker function
-        """
-        # Create shared queue for progress messages
-        manager = multiprocessing.Manager()
-        self.progress_queue = manager.Queue()
-        
-        # Start progress listener in a separate thread
-        import threading
-        listener_thread = threading.Thread(target=self._progress_listener)
-        listener_thread.start()
-        
-        try:
-            # Prepare tasks with progress queue and worker IDs
-            # For pool methods, we need to assign worker IDs based on task order
-            tasks_with_queue = [
-                (task, self.progress_queue, i % self.num_workers)
-                for i, task in enumerate(tasks)
-            ]
-            
-            # Run tasks in multiprocessing pool
-            with multiprocessing.Pool(processes=self.num_workers) as pool:
-                pool_func = getattr(pool, pool_method)
-                if pool_method in ('imap', 'imap_unordered'):
-                    results = list(pool_func(worker_func, tasks_with_queue, **pool_kwargs))
-                else:
-                    results = pool_func(worker_func, tasks_with_queue, **pool_kwargs)
-        
-        finally:
-            # Send poison pill to stop listener
-            self.progress_queue.put(None)
-            listener_thread.join()
-            
-            # Clean up any remaining progress bars
-            self._cleanup_progress_bars()
-        
-        return results
-
-
-def create_progress_wrapper(func: Callable) -> Callable:
-    """
-    Decorator to wrap a worker function with progress reporting.
-    
-    The wrapped function should accept an additional 'progress_callback' parameter
-    that can be called to report progress.
-    
-    Args:
-        func: Original worker function
-    
-    Returns:
-        Wrapped function that handles progress reporting via queue
-    """
-    def wrapper(args_tuple):
-        task_data, progress_queue, worker_id = args_tuple
-        
-        def progress_callback(msg_type: ProgressMessage.Type, **kwargs):
-            """Callback to send progress messages."""
-            progress_queue.put(ProgressMessage(msg_type, worker_id, **kwargs))
-        
-        # Call original function with progress callback
-        return func(task_data, progress_callback, worker_id)
-    
-    return wrapper
