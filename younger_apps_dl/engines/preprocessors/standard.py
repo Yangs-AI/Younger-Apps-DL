@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-23 22:10:32
+# Last Modified time: 2026-01-23 22:28:24
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -578,7 +578,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         package = dict()
         with tqdm.tqdm(total=len(split_with_hashes), desc='Packing') as progress_bar:
             for split_hash, split in split_with_hashes:
-                package[split_hash] = LogicX.saves_dag(split)
+                package[split_hash] = LogicX.saves_dag(split.dag)
                 progress_bar.update(1)
         logger.info(f'Packed.')
 
