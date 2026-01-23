@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-23 21:19:10
+# Last Modified time: 2026-01-23 22:10:32
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -401,13 +401,15 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             ]
 
             logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
-            results = list()
+            results: list[tuple[str, dict[int, dict[str, LogicX]], dict[int, dict[str, list[str]]]]] = list()
             with progress_manager.progress(total=len(tasks)*len(self.options.split_scales), desc='Extracting subgraphs'):
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                     for result in pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks):
                         results.append(result)
             logger.info(f'Subgraph Extraction Completed.')
 
+            # {split_scale: {split_hash: split}}
+            # {split_scale: {uuid: list[split_hash]}}
             # Merge Results and Restore Origin Hashes (Common for Both Modes)
             for uuid, uuid_splits, uuid_split_hashes in results:
                 for split_scale in self.options.split_scales:
@@ -417,7 +419,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                         split.dag.graph['origin'] = logicx_hashes[origin]
                         splits[split_scale][split_hash] = split
                     if uuid_split_hashes[split_scale]:
-                        split_hashes[split_scale][uuid] = uuid_split_hashes[split_scale]
+                        split_hashes[split_scale].update(uuid_split_hashes[split_scale])
 
             items_with_hashes = [
                 (split_hash, splits[split_scale][split_hash])
