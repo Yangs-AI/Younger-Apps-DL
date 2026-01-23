@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-23 20:44:47
+# Last Modified time: 2026-01-23 21:19:10
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -402,7 +402,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
             logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
             results = list()
-            with progress_manager.progress(total=len(tasks)*self.options.split_scales, desc='Extracting subgraphs'):
+            with progress_manager.progress(total=len(tasks)*len(self.options.split_scales), desc='Extracting subgraphs'):
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                     for result in pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks):
                         results.append(result)
