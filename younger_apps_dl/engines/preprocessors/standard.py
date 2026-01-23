@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-23 17:04:20
+# Last Modified time: 2026-01-23 20:44:47
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -301,7 +301,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         # Step 1: Load and Filter LogicX files
         logicx_filepaths = sorted([logicx_filepath for logicx_filepath in self.options.load_dirpath.iterdir()])
         # For Debugging Purpose, Limit to 1234 Files
-        logicx_filepaths = logicx_filepaths[:1234]
+        # logicx_filepaths = logicx_filepaths[:1234]
         logger.info(f'Scanning and Loading LogicX files ...')
         logger.info(f'Using {self.options.worker_number} worker(s)')
 
@@ -402,7 +402,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
             logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
             results = list()
-            with progress_manager.progress(total=len(uuid_occurrence), desc='Extracting subgraphs'):
+            with progress_manager.progress(total=len(tasks)*self.options.split_scales, desc='Extracting subgraphs'):
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                     for result in pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks):
                         results.append(result)
@@ -432,11 +432,12 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
             # Prepare chunks for marking
             chunk_number = self.options.worker_number * 4
+            total_logicxs = len(logicxs)
             logicxs_chunks = split_sequence(logicxs, chunk_number)
             chunks = [(logicxs_chunk, self.options.level, progress_manager) for logicxs_chunk in logicxs_chunks]
 
             logicxs = list()
-            with progress_manager.progress(total=len(logicxs), desc='Marking levels'):
+            with progress_manager.progress(total=total_logicxs, desc='Marking levels'):
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                     for logicxs_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
                         logicxs.extend(logicxs_chunk)
