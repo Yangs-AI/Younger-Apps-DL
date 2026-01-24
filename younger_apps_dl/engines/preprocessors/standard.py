@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-24 11:36:46
+# Last Modified time: 2026-01-24 18:20:37
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -26,12 +26,13 @@ import multiprocessing
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
-from younger.commons.io import save_json, save_pickle
+from younger.commons.io import save_json, save_pickle, create_dir, delete_dir
 from younger.commons.utils import split_sequence
 from younger.commons.progress import MultipleProcessProgressManager
 
 from younger_logics_ir.modules import LogicX
 
+from younger_apps_dl.commons.cache import YADL_CACHE_ROOT
 from younger_apps_dl.commons.logging import logger
 
 from younger_apps_dl.engines import BaseEngine, register_engine
@@ -176,9 +177,9 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         parameters: tuple[ str, dict[int, set[str]],
             list[int], int, int, int,
             Literal['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window', 'MixBasic', 'MixSuper'] | None,
-            bool, int, 'MultipleProcessProgressManager'
+            bool, int, 'MultipleProcessProgressManager', pathlib.Path
         ]
-    ) -> tuple[ str, dict[int, dict[str, LogicX]], dict[int, dict[str, list[str]]] ]:
+    ) -> tuple[ str, dict[int, dict[str, pathlib.Path]], dict[int, list[str]] ]:
         """Extract subgraphs for a single UUID across all split scales.
 
         Arguments:
@@ -193,24 +194,25 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - level: whether to mark levels
             - seed: seed for randomization
             - progress_manager: Progress manager for sending updates (None for single-process mode)
+            - dags_cache_dirpath: temporary directory path for storing DAG files
 
         Note: This function accesses global variables valid_logicx_filepaths, all_nid2nod, and all_nod2nids, which are initialized via pool initializer to avoid passing large data structures.
 
         Returns:
-            - tuple of (uuid, uuid_dags, uuid_dag_hashes)
+            - tuple of (uuid, uuid_dag_filepaths, uuid_dag_hashes) where uuid_dag_filepaths contains file paths instead of DAG objects
         """
         (
             uuid, uuid_positions,
             split_scales, split_count, split_tries, split_limit,
             method,
-            level, seed, progress_manager
+            level, seed, progress_manager, dags_cache_dirpath
         ) = parameters
 
         random.seed(seed)
         numpy.random.seed(seed)
 
-        uuid_dags: dict[int, dict[str, networkx.DiGraph]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {dag_hash: dag}}
-        uuid_dag_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {uuid: list[dag_hash]}}
+        uuid_dag_filepaths: dict[int, dict[str, pathlib.Path]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {dag_hash: filepath}}
+        uuid_dag_hashes: dict[int, list[str]] = {split_scale: list() for split_scale in split_scales} # {split_scale: list[dag_hash]}
 
         total = len(split_scales)
         # For Each Split Size:
@@ -263,15 +265,21 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     continue
 
                 dag_hash = LogicX.hash(split)
-                if dag_hash in uuid_dags[split_size]:
+                if dag_hash in uuid_dag_filepaths[split_size]:
                     continue
 
                 split.dag.graph['origin'] = selected_logicx_index
-                uuid_dags[split_size][dag_hash] = split.dag
-                uuid_dag_hashes[split_size].setdefault(uuid, list()).append(dag_hash)
+
+                # Save DAG to temporary file
+                dag_filename = f"{uuid}_{dag_hash}.dag"
+                dag_filepath = dags_cache_dirpath.joinpath(dag_filename)
+                split.save(dag_filepath)
+
+                uuid_dag_filepaths[split_size][dag_hash] = dag_filepath
+                uuid_dag_hashes[split_size].append(dag_hash)
                 current_split_count += 1
 
-        return (uuid, uuid_dags, uuid_dag_hashes)
+        return (uuid, uuid_dag_filepaths, uuid_dag_hashes)
 
     @staticmethod
     def _mark_levels_by_chunk_(parameters: tuple[list[pathlib.Path], bool, 'MultipleProcessProgressManager']) -> list[networkx.DiGraph]:
@@ -285,22 +293,26 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - progress_manager: Progress manager for sending updates (None for single-process mode)
 
         Returns:
-            - list of processed DiGraph(DAG) objects
+            - list of filepath for each processed DiGraph(DAG) object
         """
-        valid_logicx_filepaths_chunk, level_flag, progress_manager = parameters
+        valid_logicx_filepaths_chunk, level_flag, progress_manager, dags_cache_dirpath = parameters
 
         dags_chunk = list()
         total = len(valid_logicx_filepaths_chunk)
         for valid_logicx_filepath in valid_logicx_filepaths_chunk:
             progress_manager.update(1)
+            logicx = LogicX()
+            logicx.load(valid_logicx_filepath)
             if level_flag:
-                logicx = LogicX()
-                logicx.load(valid_logicx_filepath)
                 StandardPreprocessor.mark_node_levels(logicx.dag)
                 logicx.dag.graph['level'] = True
             else:
                 logicx.dag.graph['level'] = False
-            dags_chunk.append(logicx.dag)
+            # Save DAG to temporary file
+            dag_filename = valid_logicx_filepath.name
+            dag_filepath = dags_cache_dirpath.joinpath(dag_filename)
+            logicx.save(dag_filepath)
+            dags_chunk.append(dag_filepath)
         return dags_chunk
 
     def run(self) -> None:
@@ -396,24 +408,28 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
             # For Each Split Size, For Each Operator, Generate Specific Number of Subgraph Splits
             logger.info(f'Splitting ...')
-            dags: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {dag_hash: dag}}
-            dag_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {uuid: list[dag_hash]}}
+            dag_filepaths: dict[int, dict[str, pathlib.Path]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {dag_hash: filepath}}
+            dag_hashes: dict[int, list[str]] = {split_scale: list() for split_scale in self.options.split_scales} # {split_scale: list[dag_hash]}
 
             # Build tasks for all UUIDs
             # Use global variables via pool initializer to avoid passing large data structures repeatedly
+            # Create temporary cache directory for storing DAG files
+            dags_cache_dirpath = YADL_CACHE_ROOT.joinpath(f'PID_{os.getpid()}_preprocessor_dags')
+            create_dir(dags_cache_dirpath)
+
             progress_manager = MultipleProcessProgressManager(percent=0.1)
             tasks = [
                 (
                     uuid, uuid_positions,
                     self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
                     self.options.method,
-                    self.options.level, self.options.seed, progress_manager
+                    self.options.level, self.options.seed, progress_manager, dags_cache_dirpath
                 )
                 for uuid, uuid_positions in all_uuid_positions.items()
             ]
 
             logger.info(f'Using {self.options.worker_number} Worker(s) for Subgraph Extraction')
-            results: list[tuple[str, dict[int, dict[str, networkx.DiGraph]], dict[int, dict[str, list[str]]]]] = list()
+            results: list[tuple[str, dict[int, dict[str, pathlib.Path]], dict[int, dict[str, list[str]]]]] = list()
             with progress_manager.progress(total=len(tasks)*len(self.options.split_scales), desc='Extracting subgraphs'):
                 # Use initializer to share data across workers, avoiding repeated data transmission
                 with multiprocessing.Pool(
@@ -425,26 +441,35 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                         results.append(result)
             logger.info(f'Subgraph Extraction Completed.')
 
-            # split.dag
-            # {split_scale: {dag_hash: dag}}
-            # {split_scale: {uuid: list[dag_hash]}}
-            # Merge Results and Restore Origin Hashes (Common for Both Modes)
-            for uuid, uuid_dags, uuid_dag_hashes in results:
+            # Collect all dag_filepaths and dag_hashes
+            # {split_scale: {dag_hash: filepath}}
+            # {split_scale: list[dag_hash]}
+            for uuid, uuid_dag_filepaths, uuid_dag_hashes in results:
                 for split_scale in self.options.split_scales:
-                    for dag_hash, dag in uuid_dags[split_scale].items():
-                        # Restore actual origin filename
-                        origin = int(dag.graph['origin'])
-                        dag.graph['origin'] = valid_logicx_hashes[origin]
-                        dags[split_scale][dag_hash] = dag
-                    if uuid_dag_hashes[split_scale]:
-                        dag_hashes[split_scale].update(uuid_dag_hashes[split_scale])
+                    for dag_hash, dag_filepath in uuid_dag_filepaths[split_scale].items():
+                        dag_filepaths[split_scale][dag_hash] = dag_filepath
+                    dag_hashes[split_scale].extend(uuid_dag_hashes[split_scale])
 
-            items_with_hashes = [
-                (dag_hash, dags[split_scale][dag_hash])
-                for split_scale, dag_hashes_at_split_scale in dag_hashes.items()
-                for uuid, uuid_dag_hashes_at_split_scale in dag_hashes_at_split_scale.items()
-                for dag_hash in uuid_dag_hashes_at_split_scale
-            ]
+            # Now load all DAGs from disk in the main process
+            logger.info(f'Loading Extracted DAGs ...')
+            items_with_hashes = []
+            total_dags = sum(len(dag_hashes_at_split_scale) for dag_hashes_at_split_scale in dag_hashes.values())
+
+            with tqdm.tqdm(total=total_dags, desc='Loading DAGs') as progress_bar:
+                for split_scale, dag_hashes_at_split_scale in dag_hashes.items():
+                    for dag_hash in dag_hashes_at_split_scale:
+                        dag_filepath = dag_filepaths[split_scale][dag_hash]
+                        logicx = LogicX()
+                        logicx.load(dag_filepath)
+                        # Restore actual origin filename
+                        origin = int(logicx.dag.graph['origin'])
+                        logicx.dag.graph['origin'] = valid_logicx_hashes[origin]
+                        logicx.dag.graph['hash'] = dag_hash
+                        items_with_hashes.append((dag_hash, logicx.dag))
+                        progress_bar.update(1)
+
+            # Clean up temporary files
+            delete_dir(dags_cache_dirpath)
         else:
             # Full DAG Mode: Use Full DAGs Directly Without Subgraph Extraction
             logger.info(f'Marking levels for full DAGs ...')
@@ -453,15 +478,18 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             # Prepare chunks for marking
             chunk_number = self.options.worker_number * 4
             valid_logicx_filepaths_chunks = split_sequence(valid_logicx_filepaths, chunk_number)
-            chunks = [(valid_logicx_filepaths_chunk, self.options.level, progress_manager) for valid_logicx_filepaths_chunk in valid_logicx_filepaths_chunks]
+            chunks = [(valid_logicx_filepaths_chunk, self.options.level, progress_manager, dags_cache_dirpath) for valid_logicx_filepaths_chunk in valid_logicx_filepaths_chunks]
 
-            dags = list()
+            items_with_hashes = []
+            dag_index = 0
             with progress_manager.progress(total=len(valid_logicx_filepaths), desc='Marking levels'):
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                    for dags_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
-                        dags.extend(dags_chunk)
-
-            items_with_hashes = [(dag_hash, dag) for dag_hash, dag in zip(dag_hashes, dags)]
+                    for dag_filepaths_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
+                        for dag_filepath in dag_filepaths_chunk:
+                            logicx = LogicX()
+                            logicx.load(dag_filepath)
+                            items_with_hashes.append((valid_logicx_hashes[dag_index], logicx.dag))
+                            dag_index += 1
 
         # Step 4: Shuffle and Split into Train/Validation/Test
         random.shuffle(items_with_hashes)
