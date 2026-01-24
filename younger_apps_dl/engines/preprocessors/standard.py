@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-24 18:43:15
+# Last Modified time: 2026-01-24 19:32:29
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -332,10 +332,13 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         all_nod2nids: list[dict[int, list[str]]] = list()
         current_global_index = 0
 
-        with progress_manager.progress(total=len(logicx_filepaths), desc='Loading LogicX files'):
+        with progress_manager.progress(total=len(logicx_filepaths), chunks=len(chunks), desc='Loading LogicX files'):
             with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                chunk_count = 0
                 for result in pool.imap(StandardPreprocessor._load_logicx_by_chunk_, chunks):
                     chunk_valid_logicx_filepaths, chunk_valid_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids = result
+                    chunk_count += 1
+                    logger.info(f'[DEBUG] Main process received chunk {chunk_count}/{len(chunks)}, size={len(chunk_valid_logicx_filepaths)}')
 
                     # Build mapping from local (chunk) indices to new global contiguous indices
                     index_map = {local_idx: current_global_index + local_idx for local_idx in range(len(chunk_valid_logicx_filepaths))}
@@ -363,6 +366,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
                     current_global_index += len(chunk_valid_logicx_filepaths)
 
+                logger.info(f'[DEBUG] Main process finished consuming all {chunk_count} chunks')
+                logger.info(f'[DEBUG] About to exit pool context manager...')
         logger.info(f'Loaded {len(valid_logicx_filepaths)} DAGs matching size criteria.')
 
         # Step 2: Calculate UUID Statistics
@@ -414,7 +419,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
             logger.info(f'Using {self.options.worker_number} Worker(s) for Subgraph Extraction')
             results: list[tuple[str, dict[int, dict[str, networkx.DiGraph]], dict[int, dict[str, list[str]]]]] = list()
-            with progress_manager.progress(total=len(tasks)*len(self.options.split_scales), desc='Extracting subgraphs'):
+            with progress_manager.progress(total=len(tasks)*len(self.options.split_scales), chunks=len(tasks), desc='Extracting subgraphs'):
                 # Use initializer to share data across workers, avoiding repeated data transmission
                 with multiprocessing.Pool(
                     processes=self.options.worker_number,
@@ -456,7 +461,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             chunks = [(valid_logicx_filepaths_chunk, self.options.level, progress_manager) for valid_logicx_filepaths_chunk in valid_logicx_filepaths_chunks]
 
             dags = list()
-            with progress_manager.progress(total=len(valid_logicx_filepaths), desc='Marking levels'):
+            with progress_manager.progress(total=len(valid_logicx_filepaths), chunks=len(chunks), desc='Marking levels'):
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                     for dags_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
                         dags.extend(dags_chunk)
