@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-24 19:32:29
+# Last Modified time: 2026-01-24 19:44:49
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -169,6 +169,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                 all_nid2nod[local_index][node_index] = max([all_nid2nod[local_index][predecessor] + 1 for predecessor in predecessors] + [0])
                 all_nod2nids[local_index].setdefault(all_nid2nod[local_index][node_index], list()).append(node_index)
 
+        progress_manager.done()
         return valid_logicx_filepaths, valid_logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids
 
     @staticmethod
@@ -271,6 +272,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                 uuid_dag_hashes[split_size].setdefault(uuid, list()).append(dag_hash)
                 current_split_count += 1
 
+        progress_manager.done()
         return (uuid, uuid_dags, uuid_dag_hashes)
 
     @staticmethod
@@ -301,6 +303,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             else:
                 logicx.dag.graph['level'] = False
             dags_chunk.append(logicx.dag)
+
+        progress_manager.done()
         return dags_chunk
 
     def run(self) -> None:
@@ -334,11 +338,11 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
         with progress_manager.progress(total=len(logicx_filepaths), chunks=len(chunks), desc='Loading LogicX files'):
             with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                chunk_count = 0
+                # chunk_count = 0
                 for result in pool.imap(StandardPreprocessor._load_logicx_by_chunk_, chunks):
                     chunk_valid_logicx_filepaths, chunk_valid_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids = result
-                    chunk_count += 1
-                    logger.info(f'[DEBUG] Main process received chunk {chunk_count}/{len(chunks)}, size={len(chunk_valid_logicx_filepaths)}')
+                    # chunk_count += 1
+                    # logger.info(f'[DEBUG] Main process received chunk {chunk_count}/{len(chunks)}, size={len(chunk_valid_logicx_filepaths)}')
 
                     # Build mapping from local (chunk) indices to new global contiguous indices
                     index_map = {local_idx: current_global_index + local_idx for local_idx in range(len(chunk_valid_logicx_filepaths))}
@@ -366,8 +370,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
                     current_global_index += len(chunk_valid_logicx_filepaths)
 
-                logger.info(f'[DEBUG] Main process finished consuming all {chunk_count} chunks')
-                logger.info(f'[DEBUG] About to exit pool context manager...')
+                # logger.info(f'[DEBUG] Main process finished consuming all {chunk_count} chunks')
+                # logger.info(f'[DEBUG] About to exit pool context manager...')
         logger.info(f'Loaded {len(valid_logicx_filepaths)} DAGs matching size criteria.')
 
         # Step 2: Calculate UUID Statistics
