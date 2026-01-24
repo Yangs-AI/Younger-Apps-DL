@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-23 22:28:24
+# Last Modified time: 2026-01-24 08:34:43
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -86,7 +86,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
     OPTIONS = StandardPreprocessorOptions
 
     @staticmethod
-    def _load_logicx_by_chunk_(parameters: tuple[list[pathlib.Path], int, 'MultipleProcessProgressManager', int | None, int | None]) -> tuple[list[LogicX], list[str], dict[str, dict[int, set[str]]], list[dict[str, int]], list[dict[int, list[str]]]]:
+    def _load_logicx_by_chunk_(parameters: tuple[list[pathlib.Path], int, 'MultipleProcessProgressManager', int | None, int | None]) -> tuple[list[pathlib.Path], list[str], dict[str, dict[int, set[str]]], list[dict[str, int]], list[dict[int, list[str]]]]:
         """
         Load and filter a chunk of LogicX files in parallel.
 
@@ -99,8 +99,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - max_dag_size: maximum DAG size filter
 
         Returns:
-            - dict of loaded LogicX objects (key: global logical index)
-            - list of LogicX hashes
+            - list of file paths to load valid LogicX objects
+            - list of valid LogicX hashes
             - dict of all UUID positions across loaded LogicX objects
             - dict mapping logicx index to node index to node order
             - dict mapping logicx index to node order to list of node indices
@@ -109,8 +109,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         random.seed(seed)
         numpy.random.seed(seed)
 
-        logicxs: list[LogicX] = list() # [logicx1, logicx2, ...]
-        logicx_hashes: list[str] = list() # [logicx1_hash, logicx2_hash, ...]
+        valid_logicx_filepaths: list[pathlib.Path] = list() # [path1, path2, ...] - paths to LogicX files
+        valid_logicx_hashes: list[str] = list() # [logicx1_hash, logicx2_hash, ...]
         all_uuid_positions: dict[str, dict[int, set[str]]] = dict() # {uuid: {local_index: set[node_index]}}
         all_nid2nod: list[dict[str, int]] = list() # per-logicx mapping  list[{node_index: order}]
         all_nod2nids: list[dict[int, list[str]]] = list() # per-logicx mapping  list[{order: list[node_index]}]
@@ -126,9 +126,9 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             if max_dag_size is not None and dag_size > max_dag_size:
                 continue
 
-            local_index = len(logicxs)
-            logicxs.append(logicx)
-            logicx_hashes.append(logicx_filepath.name)
+            local_index = len(valid_logicx_filepaths)
+            valid_logicx_filepaths.append(logicx_filepath)
+            valid_logicx_hashes.append(logicx_filepath.name)
 
             # Generate UUID Positions
             for node_index in logicx.dag.nodes:
@@ -156,12 +156,12 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                 all_nid2nod[local_index][node_index] = max([all_nid2nod[local_index][predecessor] + 1 for predecessor in predecessors] + [0])
                 all_nod2nids[local_index].setdefault(all_nid2nod[local_index][node_index], list()).append(node_index)
 
-        return logicxs, logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids
+        return valid_logicx_filepaths, valid_logicx_hashes, all_uuid_positions, all_nid2nod, all_nod2nids
 
     @staticmethod
     def _extract_subgraphs_for_uuid_(
         parameters: tuple[ str, dict[int, set[str]],
-            list[LogicX],
+            list[pathlib.Path],
             list[int], int, int, int,
             Literal['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window', 'MixBasic', 'MixSuper'] | None,
             list[dict[str, int]], list[dict[int, list[str]]],
@@ -174,7 +174,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         parameters: tuple containing:
             - uuid: the operator UUID
             - uuid_positions: dict mapping logicx_index to node indices
-            - logicxs: dict of LogicX objects (key: global logical index)
+            - valid_logicx_filepaths: list of the filepaths for LogicX objects (key: global index of the valid LogicX)
             - split_scales: list of split scale values
             - split_count: number of splits to generate
             - split_tries: maximum attempts to generate splits
@@ -187,11 +187,11 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             - progress_manager: Progress manager for sending updates (None for single-process mode)
 
         Returns:
-            - tuple of (uuid, uuid_splits, uuid_split_hashes)
+            - tuple of (uuid, uuid_dags, uuid_dag_hashes)
         """
         (
             uuid, uuid_positions,
-            logicxs,
+            valid_logicx_filepaths,
             split_scales, split_count, split_tries, split_limit,
             method,
             all_nid2nod, all_nod2nids,
@@ -201,8 +201,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         random.seed(seed)
         numpy.random.seed(seed)
 
-        uuid_splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {split_hash: split}}
-        uuid_split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {uuid: list[split_hash]}}
+        uuid_dags: dict[int, dict[str, networkx.DiGraph]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {dag_hash: dag}}
+        uuid_dag_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in split_scales} # {split_scale: {uuid: list[dag_hash]}}
 
         total = len(split_scales)
         # For Each Split Size:
@@ -233,13 +233,13 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                         continue
                     selected_node_indices: list[int] = all_nod2nids[selected_logicx_index][selected_node_order]
                     split = StandardPreprocessor.retrieve_split(
-                        logicxs[selected_logicx_index], selected_node_indices, 
+                        valid_logicx_filepaths[selected_logicx_index], selected_node_indices, 
                         split_scale, split_limit, active_method
                     )
                     split_size = split_scale
                 else:
                     split = StandardPreprocessor.retrieve_split(
-                        logicxs[selected_logicx_index], [selected_node_index], 
+                        valid_logicx_filepaths[selected_logicx_index], [selected_node_index], 
                         split_scale, split_limit, active_method
                     )
                     split_size = len(split.dag)
@@ -254,41 +254,46 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                 if split_size not in split_scales:
                     continue
 
-                split_hash = LogicX.hash(split)
-                if split_hash in uuid_splits[split_size]:
+                dag_hash = LogicX.hash(split)
+                if dag_hash in uuid_dags[split_size]:
                     continue
 
                 split.dag.graph['origin'] = selected_logicx_index
-                uuid_splits[split_size][split_hash] = split
-                uuid_split_hashes[split_size].setdefault(uuid, list()).append(split_hash)
+                uuid_dags[split_size][dag_hash] = split.dag
+                uuid_dag_hashes[split_size].setdefault(uuid, list()).append(dag_hash)
                 current_split_count += 1
 
-        return (uuid, uuid_splits, uuid_split_hashes)
+        return (uuid, uuid_dags, uuid_dag_hashes)
 
     @staticmethod
-    def _mark_levels_by_chunk_(parameters: tuple[list[LogicX], bool, 'MultipleProcessProgressManager']) -> list[LogicX]:
+    def _mark_levels_by_chunk_(parameters: tuple[list[pathlib.Path], bool, 'MultipleProcessProgressManager']) -> list[networkx.DiGraph]:
         """
         Mark levels for a chunk of LogicX objects.
 
         Arguments:
         parameters: tuple containing:
-            - logicxs_chunk: list of LogicX objects to process
+            - valid_logicx_filepaths_chunk: list of filepath for each LogicX object to process
             - level_flag: whether to mark levels
             - progress_manager: Progress manager for sending updates (None for single-process mode)
 
         Returns:
-            - list of processed LogicX objects
+            - list of processed DiGraph(DAG) objects
         """
-        logicxs_chunk, level_flag, progress_manager = parameters
-        total = len(logicxs_chunk)
-        for logicx in logicxs_chunk:
+        valid_logicx_filepaths_chunk, level_flag, progress_manager = parameters
+
+        dags_chunk = list()
+        total = len(valid_logicx_filepaths_chunk)
+        for valid_logicx_filepath in valid_logicx_filepaths_chunk:
             progress_manager.update(1)
             if level_flag:
+                logicx = LogicX()
+                logicx.load(valid_logicx_filepath)
                 StandardPreprocessor.mark_node_levels(logicx.dag)
                 logicx.dag.graph['level'] = True
             else:
                 logicx.dag.graph['level'] = False
-        return logicxs_chunk
+            dags_chunk.append(logicx.dag)
+        return dags_chunk
 
     def run(self) -> None:
         random.seed(self.options.seed)
@@ -308,12 +313,12 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         progress_manager = MultipleProcessProgressManager(percent=0.1)
 
         # Prepare chunks for loading
-        chunk_number = self.options.worker_number * 4
-        logicx_filepaths_chunks = split_sequence(logicx_filepaths, chunk_number)
+        # Return file paths instead of full objects to avoid pipe buffer overflow
+        logicx_filepaths_chunks = split_sequence(logicx_filepaths, self.options.worker_number)
         chunks = [(logicx_filepaths_chunk, self.options.seed, progress_manager, self.options.min_dag_size, self.options.max_dag_size) for logicx_filepaths_chunk in logicx_filepaths_chunks]
 
-        logicxs: list[LogicX] = list()
-        logicx_hashes: list[str] = list()
+        valid_logicx_filepaths: list[pathlib.Path] = list()  # Paths to LogicX files
+        valid_logicx_hashes: list[str] = list()
         all_uuid_positions: dict[str, dict[int, set[str]]] = dict()
         all_nid2nod: list[dict[str, int]] = list()
         all_nod2nids: list[dict[int, list[str]]] = list()
@@ -322,14 +327,14 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         with progress_manager.progress(total=len(logicx_filepaths), desc='Loading LogicX files'):
             with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                 for result in pool.imap(StandardPreprocessor._load_logicx_by_chunk_, chunks):
-                    chunk_logicxs, chunk_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids = result
+                    chunk_valid_logicx_filepaths, chunk_valid_logicx_hashes, chunk_all_uuid_positions, chunk_all_nid2nod, chunk_all_nod2nids = result
 
                     # Build mapping from local (chunk) indices to new global contiguous indices
-                    index_map = {local_idx: current_global_index + local_idx for local_idx in range(len(chunk_logicxs))}
+                    index_map = {local_idx: current_global_index + local_idx for local_idx in range(len(chunk_valid_logicx_filepaths))}
 
-                    # Extend logicxs and hashes
-                    logicxs.extend(chunk_logicxs)
-                    logicx_hashes.extend(chunk_logicx_hashes)
+                    # Extend paths and hashes
+                    valid_logicx_filepaths.extend(chunk_valid_logicx_filepaths)
+                    valid_logicx_hashes.extend(chunk_valid_logicx_hashes)
 
                     # Remap and merge uuid positions
                     # {uuid: {local_index: set[node_index]}}
@@ -348,9 +353,9 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     all_nid2nod.extend(chunk_all_nid2nod)
                     all_nod2nids.extend(chunk_all_nod2nids)
 
-                    current_global_index += len(chunk_logicxs)
+                    current_global_index += len(chunk_valid_logicx_filepaths)
 
-        logger.info(f'Loaded {len(logicxs)} DAGs matching size criteria.')
+        logger.info(f'Loaded {len(valid_logicx_filepaths)} DAGs matching size criteria.')
 
         # Step 2: Calculate UUID Statistics
         uuid_occurrence: dict[str, int] = dict()
@@ -383,15 +388,15 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
             # For Each Split Size, For Each Operator, Generate Specific Number of Subgraph Splits
             logger.info(f'Splitting ...')
-            splits: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {split_hash: split}}
-            split_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {uuid: list[split_hash]}}
+            dags: dict[int, dict[str, LogicX]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {dag_hash: dag}}
+            dag_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {uuid: list[dag_hash]}}
 
             # Build tasks for all UUIDs
             progress_manager = MultipleProcessProgressManager(percent=0.1)
             tasks = [
                 (
                     uuid, uuid_positions,
-                    logicxs,
+                    valid_logicx_filepaths,
                     self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
                     self.options.method,
                     all_nid2nod, all_nod2nids,
@@ -401,31 +406,32 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             ]
 
             logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
-            results: list[tuple[str, dict[int, dict[str, LogicX]], dict[int, dict[str, list[str]]]]] = list()
+            results: list[tuple[str, dict[int, dict[str, networkx.DiGraph]], dict[int, dict[str, list[str]]]]] = list()
             with progress_manager.progress(total=len(tasks)*len(self.options.split_scales), desc='Extracting subgraphs'):
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
                     for result in pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks):
                         results.append(result)
             logger.info(f'Subgraph Extraction Completed.')
 
-            # {split_scale: {split_hash: split}}
-            # {split_scale: {uuid: list[split_hash]}}
+            # split.dag
+            # {split_scale: {dag_hash: dag}}
+            # {split_scale: {uuid: list[dag_hash]}}
             # Merge Results and Restore Origin Hashes (Common for Both Modes)
-            for uuid, uuid_splits, uuid_split_hashes in results:
+            for uuid, uuid_dags, uuid_dag_hashes in results:
                 for split_scale in self.options.split_scales:
-                    for split_hash, split in uuid_splits[split_scale].items():
+                    for dag_hash, dag in uuid_dags[split_scale].items():
                         # Restore actual origin filename
-                        origin = int(split.dag.graph['origin'])
-                        split.dag.graph['origin'] = logicx_hashes[origin]
-                        splits[split_scale][split_hash] = split
-                    if uuid_split_hashes[split_scale]:
-                        split_hashes[split_scale].update(uuid_split_hashes[split_scale])
+                        origin = int(dag.graph['origin'])
+                        dag.graph['origin'] = valid_logicx_hashes[origin]
+                        dags[split_scale][dag_hash] = dag
+                    if uuid_dag_hashes[split_scale]:
+                        dag_hashes[split_scale].update(uuid_dag_hashes[split_scale])
 
             items_with_hashes = [
-                (split_hash, splits[split_scale][split_hash])
-                for split_scale, split_hashes_at_split_scale in split_hashes.items()
-                for uuid, uuid_split_hashes_at_split_scale in split_hashes_at_split_scale.items()
-                for split_hash in uuid_split_hashes_at_split_scale
+                (dag_hash, dags[split_scale][dag_hash])
+                for split_scale, dag_hashes_at_split_scale in dag_hashes.items()
+                for uuid, uuid_dag_hashes_at_split_scale in dag_hashes_at_split_scale.items()
+                for dag_hash in uuid_dag_hashes_at_split_scale
             ]
         else:
             # Full DAG Mode: Use Full DAGs Directly Without Subgraph Extraction
@@ -434,17 +440,16 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
             # Prepare chunks for marking
             chunk_number = self.options.worker_number * 4
-            total_logicxs = len(logicxs)
-            logicxs_chunks = split_sequence(logicxs, chunk_number)
-            chunks = [(logicxs_chunk, self.options.level, progress_manager) for logicxs_chunk in logicxs_chunks]
+            valid_logicx_filepaths_chunks = split_sequence(valid_logicx_filepaths, chunk_number)
+            chunks = [(valid_logicx_filepaths_chunk, self.options.level, progress_manager) for valid_logicx_filepaths_chunk in valid_logicx_filepaths_chunks]
 
-            logicxs = list()
-            with progress_manager.progress(total=total_logicxs, desc='Marking levels'):
+            dags = list()
+            with progress_manager.progress(total=len(valid_logicx_filepaths), desc='Marking levels'):
                 with multiprocessing.Pool(processes=self.options.worker_number) as pool:
-                    for logicxs_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
-                        logicxs.extend(logicxs_chunk)
+                    for dags_chunk in pool.imap(StandardPreprocessor._mark_levels_by_chunk_, chunks):
+                        dags.extend(dags_chunk)
 
-            items_with_hashes = [(logicx_hash, logicx) for logicx_hash, logicx in zip(logicx_hashes, logicxs)]
+            items_with_hashes = [(dag_hash, dag) for dag_hash, dag in zip(dag_hashes, dags)]
 
         # Step 4: Shuffle and Split into Train/Validation/Test
         random.shuffle(items_with_hashes)
@@ -468,8 +473,10 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         self.__class__.save_dataset(uuid_occurrence, items_with_hashes[exact_training_dataset_size + exact_validation_dataset_size:exact_training_dataset_size + exact_validation_dataset_size + exact_test_dataset_size], test_dataset_save_dirpath, ignored)
 
     @classmethod
-    def retrieve_split(cls, logicx: LogicX, center_node_indices: list[str], split_scale: int, split_limit: int, method: Literal['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window']) -> LogicX:
+    def retrieve_split(cls, logicx_filepath: pathlib.Path, center_node_indices: list[str], split_scale: int, split_limit: int, method: Literal['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window']) -> LogicX:
         # Direction: Literal[0, 1, -1] Center Node: 0; Successor: 1; Predecessors: -1;
+        logicx = LogicX()
+        logicx.load(logicx_filepath)
         bfs_flags = set(center_node_indices)
         bfs_queue = collections.deque([(center_node_index, 0) for center_node_index in center_node_indices])
         if method == 'Window':
@@ -558,9 +565,9 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                         bfs_queue.append(predecessor)
 
     @classmethod
-    def save_dataset(cls, uuid_occurence: dict[str, int], split_with_hashes: list[tuple[str, LogicX]], save_dirpath: pathlib.Path, ignored: set[str]):
-        node_types = [node_type for node_type, node_occr in uuid_occurence.items() if node_type not in ignored]
-        item_names = [item_name for item_name, item_lgcx in split_with_hashes]
+    def save_dataset(cls, uuid_occurence: dict[str, int], dag_with_hashes: list[tuple[str, LogicX]], save_dirpath: pathlib.Path, ignored: set[str]):
+        node_types = [node_type for node_type, node_ocr in uuid_occurence.items() if node_type not in ignored]
+        item_names = [item_name for item_name, item_dag in dag_with_hashes]
         meta = dict(
             node_types = node_types,
             item_names = item_names,
@@ -576,9 +583,9 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
 
         logger.info(f'Packing Items ... ')
         package = dict()
-        with tqdm.tqdm(total=len(split_with_hashes), desc='Packing') as progress_bar:
-            for split_hash, split in split_with_hashes:
-                package[split_hash] = LogicX.saves_dag(split.dag)
+        with tqdm.tqdm(total=len(dag_with_hashes), desc='Packing') as progress_bar:
+            for dag_hash, dag in dag_with_hashes:
+                package[dag_hash] = LogicX.saves_dag(dag)
                 progress_bar.update(1)
         logger.info(f'Packed.')
 
