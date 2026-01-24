@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-24 08:34:43
+# Last Modified time: 2026-01-24 11:36:46
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -79,6 +79,19 @@ class StandardPreprocessorOptions(BaseModel):
     uuid_threshold: int | None = Field(None, ge=0, description='Occurence threshold to ignore uuid, lower than threshold will be discarded.')
     seed: int = Field(16861, ge=0, description='Random seed for deterministic behavior during sampling.')
     worker_number: int = Field(1, ge=1, description='Number of parallel worker processes. Set to 1 for single-process mode.')
+
+
+# Global variables for sharing data across worker processes
+global_valid_logicx_filepaths = None
+global_all_nid2nod = None
+global_all_nod2nids = None
+
+def initialize(valid_logicx_filepaths, all_nid2nod, all_nod2nids):
+    """Initialize global variables in worker processes."""
+    global global_valid_logicx_filepaths, global_all_nid2nod, global_all_nod2nids
+    global_valid_logicx_filepaths = valid_logicx_filepaths
+    global_all_nid2nod = all_nid2nod
+    global_all_nod2nids = all_nod2nids
 
 
 @register_engine('preprocessor', 'standard')
@@ -161,10 +174,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
     @staticmethod
     def _extract_subgraphs_for_uuid_(
         parameters: tuple[ str, dict[int, set[str]],
-            list[pathlib.Path],
             list[int], int, int, int,
             Literal['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window', 'MixBasic', 'MixSuper'] | None,
-            list[dict[str, int]], list[dict[int, list[str]]],
             bool, int, 'MultipleProcessProgressManager'
         ]
     ) -> tuple[ str, dict[int, dict[str, LogicX]], dict[int, dict[str, list[str]]] ]:
@@ -174,27 +185,24 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
         parameters: tuple containing:
             - uuid: the operator UUID
             - uuid_positions: dict mapping logicx_index to node indices
-            - valid_logicx_filepaths: list of the filepaths for LogicX objects (key: global index of the valid LogicX)
             - split_scales: list of split scale values
             - split_count: number of splits to generate
             - split_tries: maximum attempts to generate splits
             - split_limit: maximum subgraph size limit
             - method: extraction method name
-            - all_nid2nod: node index to node order mapping
-            - all_nod2nids: node order to node indices mapping
             - level: whether to mark levels
             - seed: seed for randomization
             - progress_manager: Progress manager for sending updates (None for single-process mode)
+
+        Note: This function accesses global variables valid_logicx_filepaths, all_nid2nod, and all_nod2nids, which are initialized via pool initializer to avoid passing large data structures.
 
         Returns:
             - tuple of (uuid, uuid_dags, uuid_dag_hashes)
         """
         (
             uuid, uuid_positions,
-            valid_logicx_filepaths,
             split_scales, split_count, split_tries, split_limit,
             method,
-            all_nid2nod, all_nod2nids,
             level, seed, progress_manager
         ) = parameters
 
@@ -228,18 +236,18 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     active_method = random.choice(['Random', 'Cascade', 'RandomFull', 'CascadeFull', 'Window'])
 
                 if active_method == 'Window':
-                    selected_node_order: int = all_nid2nod[selected_logicx_index][selected_node_index]
+                    selected_node_order: int = global_all_nid2nod[selected_logicx_index][selected_node_index]
                     if selected_node_order < split_scale - 1:
                         continue
-                    selected_node_indices: list[int] = all_nod2nids[selected_logicx_index][selected_node_order]
+                    selected_node_indices: list[int] = global_all_nod2nids[selected_logicx_index][selected_node_order]
                     split = StandardPreprocessor.retrieve_split(
-                        valid_logicx_filepaths[selected_logicx_index], selected_node_indices, 
+                        global_valid_logicx_filepaths[selected_logicx_index], selected_node_indices, 
                         split_scale, split_limit, active_method
                     )
                     split_size = split_scale
                 else:
                     split = StandardPreprocessor.retrieve_split(
-                        valid_logicx_filepaths[selected_logicx_index], [selected_node_index], 
+                        global_valid_logicx_filepaths[selected_logicx_index], [selected_node_index], 
                         split_scale, split_limit, active_method
                     )
                     split_size = len(split.dag)
@@ -392,23 +400,27 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
             dag_hashes: dict[int, dict[str, list[str]]] = {split_scale: dict() for split_scale in self.options.split_scales} # {split_scale: {uuid: list[dag_hash]}}
 
             # Build tasks for all UUIDs
+            # Use global variables via pool initializer to avoid passing large data structures repeatedly
             progress_manager = MultipleProcessProgressManager(percent=0.1)
             tasks = [
                 (
                     uuid, uuid_positions,
-                    valid_logicx_filepaths,
                     self.options.split_scales, self.options.split_count, self.options.split_tries, self.options.split_limit,
                     self.options.method,
-                    all_nid2nod, all_nod2nids,
                     self.options.level, self.options.seed, progress_manager
                 )
                 for uuid, uuid_positions in all_uuid_positions.items()
             ]
 
-            logger.info(f'Using {self.options.worker_number} Workers for Subgraph Extraction')
+            logger.info(f'Using {self.options.worker_number} Worker(s) for Subgraph Extraction')
             results: list[tuple[str, dict[int, dict[str, networkx.DiGraph]], dict[int, dict[str, list[str]]]]] = list()
             with progress_manager.progress(total=len(tasks)*len(self.options.split_scales), desc='Extracting subgraphs'):
-                with multiprocessing.Pool(processes=self.options.worker_number) as pool:
+                # Use initializer to share data across workers, avoiding repeated data transmission
+                with multiprocessing.Pool(
+                    processes=self.options.worker_number,
+                    initializer=initialize,
+                    initargs=(valid_logicx_filepaths, all_nid2nod, all_nod2nids)
+                ) as pool:
                     for result in pool.imap_unordered(StandardPreprocessor._extract_subgraphs_for_uuid_, tasks):
                         results.append(result)
             logger.info(f'Subgraph Extraction Completed.')
