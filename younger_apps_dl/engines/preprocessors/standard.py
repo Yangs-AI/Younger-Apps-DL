@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-24 19:44:49
+# Last Modified time: 2026-01-24 22:34:22
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -227,6 +227,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                 if not (current_tries < split_tries):
                     break
 
+                current_tries += 1
+
                 selected_logicx_index: int = int(numpy.random.choice(list(candidate_logicx_indices)))
                 selected_node_index: str = str(numpy.random.choice(list(uuid_positions[selected_logicx_index])))
 
@@ -240,7 +242,7 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     selected_node_order: int = global_all_nid2nod[selected_logicx_index][selected_node_index]
                     if selected_node_order < split_scale - 1:
                         continue
-                    selected_node_indices: list[int] = global_all_nod2nids[selected_logicx_index][selected_node_order]
+                    selected_node_indices: list[str] = global_all_nod2nids[selected_logicx_index][selected_node_order]
                     split = StandardPreprocessor.retrieve_split(
                         global_valid_logicx_filepaths[selected_logicx_index], selected_node_indices, 
                         split_scale, split_limit, active_method
@@ -258,8 +260,6 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                     split.dag.graph['level'] = True
                 else:
                     split.dag.graph['level'] = False
-
-                current_tries += 1
                 if split_size not in split_scales:
                     continue
 
