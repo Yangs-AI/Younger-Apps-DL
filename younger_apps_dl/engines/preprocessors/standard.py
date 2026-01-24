@@ -506,7 +506,8 @@ class StandardPreprocessor(BaseEngine[StandardPreprocessorOptions]):
                 prev_level_size = len(bfs_queue)
                 for _ in range(prev_level_size):
                     node_index, _ = bfs_queue.popleft()
-                    neighbors = numpy.random.shuffle([predecessor for predecessor in logicx.dag.predecessors(node_index)])
+                    neighbors = [predecessor for predecessor in logicx.dag.predecessors(node_index)]
+                    numpy.random.shuffle(neighbors)
                     for neighbor in neighbors:
                         if len(bfs_flags) < split_limit and neighbor not in bfs_flags:
                             bfs_flags.add(neighbor)
