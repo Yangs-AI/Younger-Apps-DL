@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 16:24:07
+# Last Modified time: 2026-01-26 16:25:04
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -221,6 +221,7 @@ class DAGDataset(Dataset):
 
         logger.info(f'Saving Processed File to {self.processed_path}')
         torch.save(dag_datas, self.processed_path)
+        logger.info(f'Done.')
 
     @classmethod
     def process_dag_data(
