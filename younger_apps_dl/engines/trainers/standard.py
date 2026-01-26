@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 21:55:26
+# Last Modified time: 2026-01-26 22:06:48
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -54,7 +54,7 @@ class StandardTrainerOptions(BaseModel):
 
     report_period: int = Field(100, ge=1, description='Period (in steps) to report the training status.')
     update_period: int = Field(1, ge=1, description='Period (in steps) to update the model parameters.')
-    saving_period: int = Field(1000, ge=1, description='Period (in steps) to save the model parameters.')
+    saving_period: int = Field(1000, ge=1, description='Period (in steps) to save the model parameters. (Should be multiple of update_period).')
 
     train_batch_size: int = Field(32, ge=1, description='Batch size for training.')
     valid_batch_size: int = Field(32, ge=1, description='Batch size for validation.')
@@ -108,6 +108,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
+        on_update_fn: Callable[[list[tuple[str, torch.Tensor | float, Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
         """
@@ -129,14 +130,16 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         :type valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]]
         :param initialize_fn: A callable to be executed once after model setup (device placement, DDP wrapping), receiving the ready-to-train model. Future it may also receive other parameters if needed.
         :type initialize_fn: Callable[[torch.nn.Module], None]
-        :param on_step_begin_fn: A callable to be executed at the beginning of each step.
+        :param on_step_begin_fn: A callable to be executed at the beginning of each step. Can be used for gradient clipping, dynamic parameter adjustment, etc.
         :type on_step_begin_fn: Callable[[int], None]
-        :param on_step_end_fn: A callable to be executed at the end of each step.
+        :param on_step_end_fn: A callable to be executed at the end of each step. Can be used for custom logging, gradient analysis, etc.
         :type on_step_end_fn: Callable[[int], None]
-        :param on_epoch_begin_fn: A callable to be executed at the beginning of each epoch.
+        :param on_epoch_begin_fn: A callable to be executed at the beginning of each epoch. Can be used for learning rate adjustment, resetting statistics, etc.
         :type on_epoch_begin_fn: Callable[[int], None]
-        :param on_epoch_end_fn: A callable to be executed at the end of each epoch.
+        :param on_epoch_end_fn: A callable to be executed at the end of each epoch. Can be used for epoch-based scheduler.step() (e.g., StepLR, CosineAnnealingLR), saving extra checkpoints, etc.
         :type on_epoch_end_fn: Callable[[int], None]
+        :param on_update_fn: A callable to be executed while parameter update (optimizer.step), receiving validation metrics. Can be used for metric-based scheduler.step() (e.g., ReduceLROnPlateau that requires validation loss). The scheduler can adjust learning rate while the actual parameter update.
+        :type on_update_fn: Callable[[list[tuple[str, torch.Tensor | float, Callable[[float], str]]]], None]
         :param dataloader_type: The type of dataloader to use ('pth' for PyTorch, 'pyg' for PyTorch Geometric).
         :type dataloader_type: Literal[&#39;pth&#39;, &#39;pyg&#39;], optional
         """
@@ -206,6 +209,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 on_step_end_fn,
                 on_epoch_begin_fn,
                 on_epoch_end_fn,
+                on_update_fn,
                 dataloader_type,
             ), nprocs=node_number, join=True)
         else:
@@ -219,6 +223,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 on_step_end_fn,
                 on_epoch_begin_fn,
                 on_epoch_end_fn,
+                on_update_fn,
                 dataloader_type,
             )
         toc = time.time()
@@ -237,6 +242,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
+        on_update_fn: Callable[[list[tuple[str, torch.Tensor | float, Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
 
@@ -299,35 +305,36 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 itr = itr + 1
 
                 # Delegate backward to `train_fn` for cases like 1 forward + N backward.
-                # `train_fn` should take care of gradient scaling if needed.
-                # metrics[0][1] is assumed to be the loss to be optimized.
-                # e.g., metrics[0][1].backward() inside `train_fn`.
-                # Thus here the returned `metrics` are expected to have been detached from the computation graph.
+                # `train_fn` should call loss.backward() and handle gradient scaling if needed.
+                # The returned `metrics` are expected to have been detached from the computation graph.
                 metrics = train_fn(minibatch)
-
-                # Update Model Parameters
-                if itr % self.options.update_period == 0:
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    scheduler.step()
 
                 # Report Metrics
                 if itr % self.options.report_period == 0:
                     self.log(epoch, step, itr, metrics, 'train')
 
-                # Validate and Save Model
+                # Validate and Update Model Parameters & Adjust Scheduler
+                logger.info(f'-> Updating parameters ...')
+                if itr % self.options.update_period == 0:
+                    logger.info(f'-> Validating ...')
+                    model.eval()
+                    stic = time.time()
+                    with torch.no_grad():
+                        metrics = valid_fn(valid_dataloader)
+                    stoc = time.time()
+                    self.log(epoch, step, itr, metrics, 'valid')
+                    model.train()
+                    logger.info(f'   Time Cost: {stoc-stic:.2f}s')
+
+                    # Callback while parameter update with validation metrics
+                    # User can adjust scheduler here based on metrics
+                    on_update_fn(metrics)
+                logger.info(f'   Parameters updated.')
+
+                # Save Model
+                # self.options.saving_period should be multiple of self.options.update_period
                 if itr % self.options.saving_period == 0:
                     if master_flag:
-                        logger.info(f'-> Validating ...')
-                        model.eval()
-                        stic = time.time()
-                        with torch.no_grad():
-                            metrics = valid_fn(valid_dataloader)
-                        stoc = time.time()
-                        self.log(epoch, step, itr, metrics, 'train')
-                        model.train()
-                        logger.info(f'   Time Cost: {stoc-stic:.2f}s')
-
                         logger.info(f'-> Saving ...')
                         stic = time.time()
                         # Metrics Here are from Validation
@@ -377,6 +384,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
+        on_update_fn: Callable[[list[tuple[str, torch.Tensor | float, Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
 
@@ -424,34 +432,35 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 itr = itr + 1
 
                 # Delegate backward to `train_fn` for cases like 1 forward + N backward.
-                # `train_fn` should take care of gradient scaling if needed.
-                # metrics[0][1] is assumed to be the loss to be optimized.
-                # e.g., metrics[0][1].backward() inside `train_fn`.
-                # Thus here the returned `metrics` are expected to have been detached from the computation graph.
+                # `train_fn` should call loss.backward() and handle gradient scaling if needed.
+                # The returned `metrics` are expected to have been detached from the computation graph.
                 metrics = train_fn(minibatch)
-
-                # Update Model Parameters
-                if itr % self.options.update_period == 0:
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    scheduler.step()
 
                 # Report Metrics
                 if itr % self.options.report_period == 0:
                     self.log(epoch, step, itr, metrics, 'train')
 
-                # Validate and Save Model
-                if itr % self.options.saving_period == 0:
+                # Validate and Update Model Parameters & Adjust Scheduler
+                logger.info(f'-> Updating parameters ...')
+                if itr % self.options.update_period == 0:
                     logger.info(f'-> Validating ...')
                     model.eval()
                     stic = time.time()
                     with torch.no_grad():
                         metrics = valid_fn(valid_dataloader)
                     stoc = time.time()
-                    self.log(epoch, step, itr, metrics, 'train')
+                    self.log(epoch, step, itr, metrics, 'valid')
                     model.train()
                     logger.info(f'   Time Cost: {stoc-stic:.2f}s')
 
+                    # Callback before parameter update with validation metrics
+                    # User can adjust scheduler here based on metrics
+                    on_update_fn(metrics)
+                logger.info(f'   Parameters updated.')
+
+                # Save Model
+                # self.options.saving_period should be multiple of self.options.update_period
+                if itr % self.options.saving_period == 0:
                     logger.info(f'-> Saving checkpoint ...')
                     stic = time.time()
                     # Metrics Here are from Validation

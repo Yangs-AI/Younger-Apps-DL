@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 20:51:55
+# Last Modified time: 2026-01-26 22:16:10
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -179,6 +179,7 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
             on_step_end_fn=self._on_step_end_fn_,
             on_epoch_begin_fn=self._on_epoch_begin_fn_,
             on_epoch_end_fn=self._on_epoch_end_fn_,
+            on_update_fn=self._on_update_fn_,
             dataloader_type='pyg',
         )
 
@@ -532,6 +533,11 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
     def _on_epoch_end_fn_(self, epoch: int) -> None:
         # Reserved for per-epoch custom logic
         return
+
+    def _on_update_fn_(self, metrics) -> None:
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        self.scheduler.step()
 
     def _compute_metrics_(
         self,

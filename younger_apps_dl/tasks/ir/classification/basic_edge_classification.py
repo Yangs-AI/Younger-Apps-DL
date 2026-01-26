@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 20:45:38
+# Last Modified time: 2026-01-26 22:12:30
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -152,6 +152,8 @@ class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
             self._train_fn_,
             self._valid_fn_,
             initialize_fn=self._initialize_fn_,
+            on_update_fn=self._on_update_fn_,
+            on_epoch_end_fn=self._on_epoch_end_fn_,
             dataloader_type='pyg',
         )
 
@@ -336,6 +338,21 @@ class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
 
     def _test_fn_(self, dataloader: torch.utils.data.DataLoader) -> tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]:
         return self._valid_fn_(dataloader)
+
+    def _on_update_fn_(self, metrics: tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]) -> None:
+        """
+        Callback function for each parameter update during training.
+        Users can customize this function to update parameters and adjust learning rate schedulers, or perform other actions based on metrics.
+        """
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+    def _on_epoch_end_fn_(self, epoch: int) -> None:
+        """
+        Callback function at the end of each epoch during training.
+        Users can customize this function to perform actions such as adjusting learning rate schedulers based on epoch number.
+        """
+        self.scheduler.step(epoch)
 
     def _compute_metrics_(
         self,

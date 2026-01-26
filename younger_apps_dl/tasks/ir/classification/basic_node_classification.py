@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 16:34:32
+# Last Modified time: 2026-01-26 21:51:34
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -156,6 +156,7 @@ class BasicNodeClassification(BaseTask[BasicNodeClassificationOptions]):
             self._train_fn_,
             self._valid_fn_,
             initialize_fn=self._initialize_fn_,
+            on_update_fn=self._on_update_fn_,
             dataloader_type='pyg'
         )
 
@@ -334,6 +335,9 @@ class BasicNodeClassification(BaseTask[BasicNodeClassificationOptions]):
         else:
             raise ValueError(f'Unsupported Stage During Training: {self.options.stage}')
 
+        # Backward pass - delegate to train_fn for flexibility
+        loss.backward()
+
         return self._compute_metrics_(loss.item())
 
     def _valid_fn_(self, dataloader: torch.utils.data.DataLoader) -> tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]:
@@ -394,6 +398,18 @@ class BasicNodeClassification(BaseTask[BasicNodeClassificationOptions]):
 
     def _test_fn_(self, dataloader: torch.utils.data.DataLoader) -> tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]:
         return self._valid_fn_(dataloader)
+
+    def _on_update_fn_(self, metrics: tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]) -> None:
+        """
+        Callback function for each parameter update during training.
+        Users can customize this function to update parameters and adjust learning rate schedulers, or perform other actions based on metrics.
+        """
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        metric_names, metric_values, _ = metrics
+        metric_dict = dict(zip(metric_names, metric_values))
+        if 'loss' in metric_dict:
+            self.scheduler.step(metric_dict['loss'])
 
     def _compute_metrics_(
         self,
