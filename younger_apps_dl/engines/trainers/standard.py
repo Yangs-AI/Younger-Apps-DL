@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 22:42:16
+# Last Modified time: 2026-01-26 22:57:14
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -339,7 +339,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                         stic = time.time()
                         # Metrics Here are from Validation
                         # Thus all metrics are detached from computation graph.
-                        checkpoint = Checkpoint(epoch, step, itr, model.module.state_dict(), optimizer.state_dict(), scheduler.state_dict(), dict(((metric[0], metric[1]) for metric in metrics)))
+                        checkpoint = Checkpoint(epoch, step, itr, model.module.state_dict(), optimizer.state_dict(), scheduler.state_dict(), dict(((metric[0], metric[1]) for metric in zip(*metrics))))
                         save_checkpoint(checkpoint, self.options.checkpoint_savepath, self.options.checkpoint_basename, self.options.checkpoint_keepdisk)
                         stoc = time.time()
                         logger.info(f'   Time Cost: {stoc-stic:.2f}s')
@@ -465,7 +465,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                     stic = time.time()
                     # Metrics Here are from Validation
                     # Thus all metrics are detached from computation graph.
-                    checkpoint = Checkpoint(epoch, step, itr, model.state_dict(), optimizer.state_dict(), scheduler.state_dict(), dict(((metric[0], metric[1]) for metric in metrics)))
+                    checkpoint = Checkpoint(epoch, step, itr, model.state_dict(), optimizer.state_dict(), scheduler.state_dict(), dict(((metric[0], metric[1]) for metric in zip(*metrics))))
                     save_checkpoint(checkpoint, self.options.checkpoint_savepath, self.options.checkpoint_basename, self.options.checkpoint_keepdisk)
                     stoc = time.time()
                     logger.info(f'   Time Cost: {stoc-stic:.2f}s')
