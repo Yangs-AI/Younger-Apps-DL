@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 16:25:04
+# Last Modified time: 2026-01-26 16:31:27
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -143,7 +143,7 @@ class DAGDataset(Dataset):
 
         super().__init__(root, transform, pre_transform, pre_filter, log, force_reload)
 
-        logger.info('Loading Processed File')
+        logger.info(f'Loading Processed File ({self.name} - {self.split}) from {self.processed_path}')
         self.all_dag_data: list[DAGData] = torch.load(self.processed_path)
         logger.info(f'Loaded {len(self.all_dag_data)} samples for split="{self.split}".')
 
@@ -207,7 +207,7 @@ class DAGDataset(Dataset):
         dag_datas: list[DAGData] = list()
         chunk_filepaths: list[pathlib.Path] = []
 
-        with progress_manager.progress(total=len(self.hashs), chunks=len(chunks), desc="Processing DAGs"):
+        with progress_manager.progress(total=len(self.hashs), chunks=len(chunks), desc=f'Processing DAGs ({self.name} - {self.split})'):
             with multiprocessing.Pool(self.worker_number) as pool:
                 for chunk_filepath in pool.imap_unordered(self._process_chunk_, chunks):
                     chunk_filepaths.append(chunk_filepath)
