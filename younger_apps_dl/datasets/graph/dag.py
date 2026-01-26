@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 14:14:04
+# Last Modified time: 2026-01-26 14:23:56
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -197,7 +197,7 @@ class DAGDataset(Dataset):
         sdags_chunks: list[list[str]] = split_sequence(sdags, chunk_count)
         chunks = [(sdags_chunk, progress_manager) for sdags_chunk in sdags_chunks]
         dag_datas: list[DAGData] = list()
-        with progress_manager.progress(total=len(self.hashs), desc="Processing DAGs"):
+        with progress_manager.progress(total=len(self.hashs), chunks=len(chunks), desc="Processing DAGs"):
             with multiprocessing.Pool(self.worker_number) as pool:
                 for dag_datas_chunk in pool.imap(self._process_chunk_, chunks):
                     dag_datas.extend(dag_datas_chunk)
