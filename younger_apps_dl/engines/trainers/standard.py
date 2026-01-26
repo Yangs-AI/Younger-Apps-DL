@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 22:06:48
+# Last Modified time: 2026-01-26 22:27:35
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -79,7 +79,7 @@ class StandardTrainerOptions(BaseModel):
 class StandardTrainer(BaseEngine[StandardTrainerOptions]):
     OPTIONS = StandardTrainerOptions
 
-    def log(self, epoch: int, step: int, itr: int, metrics: list[tuple[str, torch.Tensor | float, Callable[[float], str]]], stage: Literal['train', 'valid']) -> None:
+    def log(self, epoch: int, step: int, itr: int, metrics: tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]], stage: Literal['train', 'valid']) -> None:
         # Log the training/validation metrics.
         # metrics: list of (metric_name, metric_value, metric_format)
         # metric_value can be a torch.Tensor or float
@@ -87,7 +87,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         # e.g., metrics = [('loss', torch.tensor(0.1234), lambda x: f'{x:.4f}'), ('accuracy', 98.76, lambda x: f'{x:.2f}%')]
         with torch.no_grad():
             logs = list()
-            for metric_name, metric_value, metric_format in metrics:
+            for metric_name, metric_value, metric_format in zip(*metrics):
                 if isinstance(metric_value, torch.Tensor):
                     metric_value = metric_value.detach()
                 if stage == 'train' and self.options.distributed:
@@ -101,14 +101,14 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.LRScheduler,
         train_dataset: torch.utils.data.Dataset,
         valid_dataset: torch.utils.data.Dataset,
-        train_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
-        valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        train_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]],
+        valid_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]],
         initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
         on_step_begin_fn: Callable[[int], None] = no_operation,
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
-        on_update_fn: Callable[[list[tuple[str, torch.Tensor | float, Callable[[float], str]]]], None] = no_operation,
+        on_update_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
         """
@@ -125,9 +125,9 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         :param valid_dataset: The dataset used for validation.
         :type valid_dataset: torch.utils.data.Dataset
         :param train_fn: A callable that defines how to process a `minibatch` during training, feeding it to the model and returning the computed metrics (names, values, formats). The 0th metric must be the loss to be optimized.
-        :type train_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]]
+        :type train_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]]
         :param valid_fn: A callable that defines how to process a `sequence` of `minibatch` during validation, feeding it to the model and returning the computed metrics (names, values, formats).
-        :type valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]]
+        :type valid_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]]
         :param initialize_fn: A callable to be executed once after model setup (device placement, DDP wrapping), receiving the ready-to-train model. Future it may also receive other parameters if needed.
         :type initialize_fn: Callable[[torch.nn.Module], None]
         :param on_step_begin_fn: A callable to be executed at the beginning of each step. Can be used for gradient clipping, dynamic parameter adjustment, etc.
@@ -139,7 +139,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         :param on_epoch_end_fn: A callable to be executed at the end of each epoch. Can be used for epoch-based scheduler.step() (e.g., StepLR, CosineAnnealingLR), saving extra checkpoints, etc.
         :type on_epoch_end_fn: Callable[[int], None]
         :param on_update_fn: A callable to be executed while parameter update (optimizer.step), receiving validation metrics. Can be used for metric-based scheduler.step() (e.g., ReduceLROnPlateau that requires validation loss). The scheduler can adjust learning rate while the actual parameter update.
-        :type on_update_fn: Callable[[list[tuple[str, torch.Tensor | float, Callable[[float], str]]]], None]
+        :type on_update_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None]
         :param dataloader_type: The type of dataloader to use ('pth' for PyTorch, 'pyg' for PyTorch Geometric).
         :type dataloader_type: Literal[&#39;pth&#39;, &#39;pyg&#39;], optional
         """
@@ -235,14 +235,14 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.LRScheduler,
         train_dataset: torch.utils.data.Dataset,
         valid_dataset: torch.utils.data.Dataset,
-        train_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
-        valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        train_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]],
+        valid_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]],
         initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
         on_step_begin_fn: Callable[[int], None] = no_operation,
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
-        on_update_fn: Callable[[list[tuple[str, torch.Tensor | float, Callable[[float], str]]]], None] = no_operation,
+        on_update_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
 
@@ -377,14 +377,14 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.LRScheduler,
         train_dataset: torch.utils.data.Dataset,
         valid_dataset: torch.utils.data.Dataset,
-        train_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
-        valid_fn: Callable[[Any], list[tuple[str, torch.Tensor | float, Callable[[float], str]]]],
+        train_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]],
+        valid_fn: Callable[[Any], tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]],
         initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
         on_step_begin_fn: Callable[[int], None] = no_operation,
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
-        on_update_fn: Callable[[list[tuple[str, torch.Tensor | float, Callable[[float], str]]]], None] = no_operation,
+        on_update_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
 
