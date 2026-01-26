@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 16:35:00
+# Last Modified time: 2026-01-26 16:40:04
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -15,6 +15,7 @@
 
 
 import os
+import tqdm
 import torch
 import pathlib
 import networkx
@@ -194,7 +195,9 @@ class DAGDataset(Dataset):
             progress_manager.update(1)
 
         chunk_filepath = self.cache_dirpath.joinpath(f'_process_chunk_{os.getpid()}_{multiprocessing.current_process()._identity[0]}.pt')
+        logger.info(f'Saving Processed Chunk to {chunk_filepath} (Size: {len(dag_datas_chunk)})')
         torch.save(dag_datas_chunk, chunk_filepath)
+        logger.info(f'Done.')
         progress_manager.done()
         return chunk_filepath
 
@@ -214,8 +217,10 @@ class DAGDataset(Dataset):
                     chunk_filepaths.append(chunk_filepath)
 
         logger.info(f'Merging Processed Chunks (Cache Files: {len(chunk_filepaths)} at {self.cache_dirpath})')
-        for chunk_filepath in chunk_filepaths:
-            dag_datas.extend(torch.load(chunk_filepath))
+        with tqdm.tqdm(total=len(chunk_filepaths), desc='Merging Chunks') as progress_bar:
+            for chunk_filepath in chunk_filepaths:
+                dag_datas.extend(torch.load(chunk_filepath))
+                progress_bar.update(1)
 
         logger.info(f'Cleaning Up Temp Chunk Files (Cache Files: {len(chunk_filepaths)} at {self.cache_dirpath})')
         delete_dir(self.cache_dirpath)
