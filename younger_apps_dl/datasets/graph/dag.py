@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 14:28:21
+# Last Modified time: 2026-01-26 16:15:47
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -15,8 +15,8 @@
 
 
 import os
-import tqdm
 import torch
+import pathlib
 import networkx
 import multiprocessing
 
@@ -26,13 +26,14 @@ from torch_geometric.data import Data, Dataset
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr, GlobalStorage
 from torch_geometric.utils import is_sparse
 
-from younger.commons.io import load_json, load_pickle
+from younger.commons.io import load_json, load_pickle, create_dir
 from younger.commons.utils import split_sequence
 from younger.commons.progress import MultipleProcessProgressManager
 
 from younger_logics_ir.modules import LogicX
 
 from younger_apps_dl.datasets import register_dataset
+from younger_apps_dl.commons.cache import YADL_CACHE_ROOT
 from younger_apps_dl.commons.logging import logger
 
 
@@ -133,6 +134,9 @@ class DAGDataset(Dataset):
         self.split = split
         self.worker_number = worker_number
 
+        self.cache_dirpath = os.path.join(YADL_CACHE_ROOT, 'datasets', 'graph', 'dag', self.name, self.split)
+        create_dir(self.cache_dirpath)
+
         self.meta = self.__class__.load_meta(self.meta_filepath)
         self.dicts = self.__class__.load_dicts(self.meta)
         self.hashs = self.__class__.load_hashs(self.meta)
@@ -179,16 +183,19 @@ class DAGDataset(Dataset):
         hashs = sorted(meta['item_names'])
         return hashs
 
-    def _process_chunk_(self, parameter: tuple[list[str], MultipleProcessProgressManager]) -> list[DAGData]:
+    def _process_chunk_(self, parameter: tuple[list[str], MultipleProcessProgressManager]) -> pathlib.Path:
         sdags_chunk, progress_manager = parameter
-        dag_datas_chunk = list()
+        dag_datas_chunk: list[DAGData] = list()
         for sdag in sdags_chunk:
             dag = LogicX.loads_dag(sdag)
             dag_data = self.__class__.process_dag_data(dag, **self.arguments)
             dag_datas_chunk.append(dag_data)
             progress_manager.update(1)
+
+        chunk_filepath = self.cache_dirpath.joinpath(f'_process_chunk_{os.getpid()}_{multiprocessing.current_process()._identity[0]}.pt')
+        torch.save(dag_datas_chunk, chunk_filepath)
         progress_manager.done()
-        return dag_datas_chunk
+        return chunk_filepath
 
     def process(self):
         progress_manager = MultipleProcessProgressManager(percent=0.1)
@@ -198,10 +205,14 @@ class DAGDataset(Dataset):
         sdags_chunks: list[list[str]] = split_sequence(sdags, chunk_count)
         chunks = [(sdags_chunk, progress_manager) for sdags_chunk in sdags_chunks]
         dag_datas: list[DAGData] = list()
+        chunk_filepaths: list[pathlib.Path] = []
+
         with progress_manager.progress(total=len(self.hashs), chunks=len(chunks), desc="Processing DAGs"):
             with multiprocessing.Pool(self.worker_number) as pool:
-                for dag_datas_chunk in pool.imap(self._process_chunk_, chunks):
-                    dag_datas.extend(dag_datas_chunk)
+                for chunk_filepath in pool.imap_unordered(self._process_chunk_, chunks):
+                    chunk_filepaths.append(chunk_filepath)
+                    dag_datas.extend(torch.load(chunk_filepath))
+                    os.remove(chunk_filepath)
 
         torch.save(dag_datas, self.processed_path)
 
