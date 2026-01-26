@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 22:27:35
+# Last Modified time: 2026-01-26 22:42:16
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -441,7 +441,6 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                     self.log(epoch, step, itr, metrics, 'train')
 
                 # Validate and Update Model Parameters & Adjust Scheduler
-                logger.info(f'-> Updating parameters ...')
                 if itr % self.options.update_period == 0:
                     logger.info(f'-> Validating ...')
                     model.eval()
@@ -453,10 +452,11 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                     model.train()
                     logger.info(f'   Time Cost: {stoc-stic:.2f}s')
 
+                    logger.info(f'-> Updating parameters ...')
                     # Callback before parameter update with validation metrics
                     # User can adjust scheduler here based on metrics
                     on_update_fn(metrics)
-                logger.info(f'   Parameters updated.')
+                    logger.info(f'   Parameters updated.')
 
                 # Save Model
                 # self.options.saving_period should be multiple of self.options.update_period
