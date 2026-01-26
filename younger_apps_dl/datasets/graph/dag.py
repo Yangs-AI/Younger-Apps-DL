@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 12:54:00
+# Last Modified time: 2026-01-26 14:14:04
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -28,6 +28,7 @@ from torch_geometric.utils import is_sparse
 
 from younger.commons.io import load_json, load_pickle
 from younger.commons.utils import split_sequence
+from younger.commons.progress import MultipleProcessProgressManager
 
 from younger_logics_ir.modules import LogicX
 
@@ -179,26 +180,27 @@ class DAGDataset(Dataset):
         return hashs
 
     def _process_chunk_(self, parameter: tuple[list[str], int]) -> list[DAGData]:
-        sdags_chunk, worker_index = parameter
+        sdags_chunk, progress_manager = parameter
         dag_datas_chunk = list()
-        with tqdm.tqdm(total=len(sdags_chunk), desc=f"Processing: Worker PID - {os.getpid()}", position=worker_index) as progress_bar:
-            for sdag in sdags_chunk:
-                dag = LogicX.loads_dag(sdag)
-                dag_data = self.__class__.process_dag_data(dag, **self.arguments)
-                dag_datas_chunk.append(dag_data)
-                progress_bar.update(1)
+        for sdag in sdags_chunk:
+            dag = LogicX.loads_dag(sdag)
+            dag_data = self.__class__.process_dag_data(dag, **self.arguments)
+            dag_datas_chunk.append(dag_data)
+            progress_manager.update(1)
         return dag_datas_chunk
 
     def process(self):
+        progress_manager = MultipleProcessProgressManager(percent=0.1)
         hash2sdag: dict[str, str] = load_pickle(self.raw_path)
         sdags = [hash2sdag[hash] for hash in self.hashs]
         chunk_count = self.worker_number
         sdags_chunks: list[list[str]] = split_sequence(sdags, chunk_count)
-        worker_indices: list[int] = list(range(self.worker_number))
+        chunks = [(sdags_chunk, progress_manager) for sdags_chunk in sdags_chunks]
         dag_datas: list[DAGData] = list()
-        with multiprocessing.Pool(self.worker_number) as pool:
-            for dag_datas_chunk in pool.imap(self._process_chunk_, zip(sdags_chunks, worker_indices)):
-                dag_datas.extend(dag_datas_chunk)
+        with progress_manager.progress(total=len(self.hashs), desc="Processing DAGs"):
+            with multiprocessing.Pool(self.worker_number) as pool:
+                for dag_datas_chunk in pool.imap(self._process_chunk_, chunks):
+                    dag_datas.extend(dag_datas_chunk)
 
         torch.save(dag_datas, self.processed_path)
 
