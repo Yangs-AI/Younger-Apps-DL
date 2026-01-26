@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 14:23:56
+# Last Modified time: 2026-01-26 14:28:21
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -179,7 +179,7 @@ class DAGDataset(Dataset):
         hashs = sorted(meta['item_names'])
         return hashs
 
-    def _process_chunk_(self, parameter: tuple[list[str], int]) -> list[DAGData]:
+    def _process_chunk_(self, parameter: tuple[list[str], MultipleProcessProgressManager]) -> list[DAGData]:
         sdags_chunk, progress_manager = parameter
         dag_datas_chunk = list()
         for sdag in sdags_chunk:
@@ -187,6 +187,7 @@ class DAGDataset(Dataset):
             dag_data = self.__class__.process_dag_data(dag, **self.arguments)
             dag_datas_chunk.append(dag_data)
             progress_manager.update(1)
+        progress_manager.done()
         return dag_datas_chunk
 
     def process(self):
