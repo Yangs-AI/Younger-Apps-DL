@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 16:18:22
+# Last Modified time: 2026-01-26 16:24:07
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -26,7 +26,7 @@ from torch_geometric.data import Data, Dataset
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr, GlobalStorage
 from torch_geometric.utils import is_sparse
 
-from younger.commons.io import load_json, load_pickle, create_dir
+from younger.commons.io import load_json, load_pickle, create_dir, delete_dir
 from younger.commons.utils import split_sequence
 from younger.commons.progress import MultipleProcessProgressManager
 
@@ -211,9 +211,15 @@ class DAGDataset(Dataset):
             with multiprocessing.Pool(self.worker_number) as pool:
                 for chunk_filepath in pool.imap_unordered(self._process_chunk_, chunks):
                     chunk_filepaths.append(chunk_filepath)
-                    dag_datas.extend(torch.load(chunk_filepath))
-                    os.remove(chunk_filepath)
 
+        logger.info(f'Merging Processed Chunks (Cache Files: {len(chunk_filepaths)} at {self.cache_dirpath})')
+        for chunk_filepath in chunk_filepaths:
+            dag_datas.extend(torch.load(chunk_filepath))
+
+        logger.info(f'Cleaning Up Temp Chunk Files (Cache Files: {len(chunk_filepaths)} at {self.cache_dirpath})')
+        delete_dir(self.cache_dirpath)
+
+        logger.info(f'Saving Processed File to {self.processed_path}')
         torch.save(dag_datas, self.processed_path)
 
     @classmethod
