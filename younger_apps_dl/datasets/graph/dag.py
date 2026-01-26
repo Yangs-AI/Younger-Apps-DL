@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 16:15:47
+# Last Modified time: 2026-01-26 16:18:22
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -134,7 +134,7 @@ class DAGDataset(Dataset):
         self.split = split
         self.worker_number = worker_number
 
-        self.cache_dirpath = os.path.join(YADL_CACHE_ROOT, 'datasets', 'graph', 'dag', self.name, self.split)
+        self.cache_dirpath = YADL_CACHE_ROOT.joinpath('datasets', 'graph', 'dag', self.name, self.split)
         create_dir(self.cache_dirpath)
 
         self.meta = self.__class__.load_meta(self.meta_filepath)
