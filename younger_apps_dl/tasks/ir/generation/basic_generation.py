@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 22:16:10
+# Last Modified time: 2026-01-26 22:53:07
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -576,7 +576,6 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
             micro_f1 = f1_score(gold, pred, average='micro', zero_division=0)
             metrics.extend([
                 ('acc', acc, lambda x: f'{x:.4f}'),
-                ('loss', loss, lambda x: f'{x:.4f}'),
                 ('macro_p', macro_p, lambda x: f'{x:.4f}'),
                 ('macro_r', macro_r, lambda x: f'{x:.4f}'),
                 ('macro_f1', macro_f1, lambda x: f'{x:.4f}'),
