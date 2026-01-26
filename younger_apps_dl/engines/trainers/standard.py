@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 22:57:14
+# Last Modified time: 2026-01-26 23:44:08
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -28,7 +28,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from younger.commons.io import create_dir
 from younger.commons.utils import no_operation
-from younger_apps_dl.commons.utils import get_device_descriptor, make_reproducible, broadcast_object
+from younger_apps_dl.commons.utils import get_device_descriptor, make_reproducible, broadcast_object, move_optimizer_to_device
 from younger_apps_dl.commons.logging import logger
 from younger_apps_dl.commons.checkpoint import load_checkpoint, save_checkpoint, Checkpoint
 
@@ -252,6 +252,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         device_descriptor = get_device_descriptor('GPU', rank)
         torch.cuda.set_device(rank)
         model.to(device=device_descriptor)
+        move_optimizer_to_device(optimizer, device_descriptor)
         logger.info(f'-> Process {rank} Use Device \'{device_descriptor}\'')
 
         os.getpid()
@@ -404,6 +405,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
 
         device_descriptor = get_device_descriptor('GPU', 0)
         model.to(device=device_descriptor)
+        move_optimizer_to_device(optimizer, device_descriptor)
         logger.info(f'-> Using Device: \'{device_descriptor}\'')
 
         # Notify that model is ready (after device placement)

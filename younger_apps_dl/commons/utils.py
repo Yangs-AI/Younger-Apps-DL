@@ -86,3 +86,19 @@ def gradient_computation_switch(module: torch.nn.Module, switch: bool):
     """
     for parameter in module.parameters():
         parameter.requires_grad = switch
+
+
+def move_optimizer_to_device(optimizer: torch.optim.Optimizer, device: torch.device) -> None:
+    """
+    Move optimizer state tensors to the specified device.
+    This is necessary after loading optimizer state_dict from checkpoint,
+    as the state tensors (momentum buffers, Adam's exp_avg, etc.) will be on CPU by default.
+    
+    Args:
+        optimizer: The optimizer whose state needs to be moved
+        device: The target device to move the state to
+    """
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(device)
