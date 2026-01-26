@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 16:40:04
+# Last Modified time: 2026-01-26 16:42:07
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -195,9 +195,7 @@ class DAGDataset(Dataset):
             progress_manager.update(1)
 
         chunk_filepath = self.cache_dirpath.joinpath(f'_process_chunk_{os.getpid()}_{multiprocessing.current_process()._identity[0]}.pt')
-        logger.info(f'Saving Processed Chunk to {chunk_filepath} (Size: {len(dag_datas_chunk)})')
         torch.save(dag_datas_chunk, chunk_filepath)
-        logger.info(f'Done.')
         progress_manager.done()
         return chunk_filepath
 
