@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-14 21:21:29
+# Last Modified time: 2026-01-26 12:54:00
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -17,6 +17,7 @@
 import os
 import tqdm
 import torch
+import networkx
 import multiprocessing
 
 from typing import Any, Callable, Literal
@@ -204,7 +205,7 @@ class DAGDataset(Dataset):
     @classmethod
     def process_dag_data(
         cls,
-        logicx: LogicX,
+        dag: networkx.DiGraph,
         **arguments,
     ) -> DAGData:
         """
@@ -212,36 +213,36 @@ class DAGDataset(Dataset):
         Key 'dicts' must contained in arguments: dict[Literal['i2t', 't2i'], dict[int, str] | dict[str, int]]
 
         """
-        nxids = sorted(list(logicx.dag.nodes)) # NetworkX IDs
-        pgids = list(range(logicx.dag.number_of_nodes())) # PyGeometric IDs
+        nxids = sorted(list(dag.nodes)) # NetworkX IDs
+        pgids = list(range(dag.number_of_nodes())) # PyGeometric IDs
         nxid2pgid = dict(zip(nxids, pgids))
         # [B, A, C, D]
-        # >>> print(list(sorted(logicx.dag.nodes)))
+        # >>> print(list(sorted(dag.nodes)))
         # [A, B, C, D]
         # >>> print(nxid2pgid)
         # {A: 0, B: 1, C: 2, D: 3}
 
-        x = cls.process_dag_x(logicx, arguments['dicts'], nxid2pgid)
-        edge_index = cls.process_dag_edge_index(logicx, nxid2pgid)
-        if logicx.dag.graph['level']:
-            level = cls.process_dag_level(logicx, nxid2pgid)
+        x = cls.process_dag_x(dag, arguments['dicts'], nxid2pgid)
+        edge_index = cls.process_dag_edge_index(dag, nxid2pgid)
+        if dag.graph['level']:
+            level = cls.process_dag_level(dag, nxid2pgid)
             dag_data = DAGData(x=x, edge_index=edge_index, level=level)
         else:
             dag_data = DAGData(x=x, edge_index=edge_index)
         return dag_data
 
     @classmethod
-    def process_dag_x(cls, logicx: LogicX, dicts: dict[Literal['i2t', 't2i'], dict[int, str] | dict[str, int]], nxid2pgid: dict[str, int]) -> torch.Tensor:
+    def process_dag_x(cls, dag: networkx.DiGraph, dicts: dict[Literal['i2t', 't2i'], dict[int, str] | dict[str, int]], nxid2pgid: dict[str, int]) -> torch.Tensor:
         # Shape: [#Node, 1]
 
         # ID in DAG
         # NX Node ID sorted by PG Node ID
-        node_indices_in_dag: list[str] = sorted(list(logicx.dag.nodes), key=lambda x: nxid2pgid[x])
+        node_indices_in_dag: list[str] = sorted(list(dag.nodes), key=lambda x: nxid2pgid[x])
 
         # ID in Dict
         node_indices_in_dict = list()
         for node_index_in_dag in node_indices_in_dag:
-            node_uuid = logicx.dag.nodes[node_index_in_dag]['node_uuid']
+            node_uuid = dag.nodes[node_index_in_dag]['node_uuid']
             if node_uuid in dicts['t2i']:
                 node_index_in_dict = [dicts['t2i'][node_uuid]]
             else:
@@ -252,21 +253,21 @@ class DAGDataset(Dataset):
         return x
 
     @classmethod
-    def process_dag_edge_index(cls, logicx: LogicX, nxid2pgid: dict[str, int]) -> torch.Tensor:
+    def process_dag_edge_index(cls, dag: networkx.DiGraph, nxid2pgid: dict[str, int]) -> torch.Tensor:
         # Shape: [2, #Edge]
-        edge_index = torch.empty((2, logicx.dag.number_of_edges()), dtype=torch.long)
-        for index, (src, dst) in enumerate(list(logicx.dag.edges)):
+        edge_index = torch.empty((2, dag.number_of_edges()), dtype=torch.long)
+        for index, (src, dst) in enumerate(list(dag.edges)):
             edge_index[0, index] = nxid2pgid[src]
             edge_index[1, index] = nxid2pgid[dst]
         return edge_index
 
     @classmethod
-    def process_dag_level(cls, logicx: LogicX, nxid2pgid: dict[str, int]) -> torch.Tensor:
+    def process_dag_level(cls, dag: networkx.DiGraph, nxid2pgid: dict[str, int]) -> torch.Tensor:
         # Shape: [#Node, 1]
 
         level = list()
-        node_indices_in_dag: list[str] = sorted(list(logicx.dag.nodes), key=lambda x: nxid2pgid[x])
+        node_indices_in_dag: list[str] = sorted(list(dag.nodes), key=lambda x: nxid2pgid[x])
         for index, node_index_in_dag in enumerate(node_indices_in_dag):
-            level.append([logicx.dag.nodes[node_index_in_dag]['level']])
+            level.append([dag.nodes[node_index_in_dag]['level']])
         level = torch.tensor(level, dtype=torch.long)
         return level
