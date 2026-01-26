@@ -285,12 +285,10 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         model.train()
         optimizer.zero_grad()
         itr = start_from_itr
-        # Epoch 1 .. self.options.life_cycle
-        for epoch in range(1, self.options.life_cycle + 1):
-            if epoch < start_from_epoch:
-                logger.info(f'-> Skip Epoch {epoch} Before Epoch {start_from_epoch}.')
-                continue
-
+        # Epoch: start_from_epoch (or 1) .. self.options.life_cycle
+        # Optimization: When resuming from checkpoint, directly start from start_from_epoch
+        # instead of range(1, life_cycle+1) to avoid unnecessary iterations.
+        for epoch in range(max(1, start_from_epoch), self.options.life_cycle + 1):
             train_sampler.set_epoch(epoch)
 
             tic = time.time()
@@ -298,9 +296,22 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
             # Step 1 .. len(train_dataloader)
             for step, minibatch in enumerate(train_dataloader, start=1):
                 on_step_begin_fn(step)
-                if epoch == start_from_epoch and step <= start_from_step:
-                    logger.info(f'-> Skip Mini-Batch {step} Before Step {start_from_step}.')
-                    continue
+                # NOTE: Step-level resume is optional and can be omitted for simplicity.
+                # When resuming training, we can iterate through the entire dataset from the beginning
+                # of the current epoch. Only epoch and itr need to be tracked for correct checkpoint resume.
+                # The following step-skipping logic is commented out to allow full dataset iteration:
+                # if epoch == start_from_epoch and step <= start_from_step:
+                #     logger.info(f'-> Skip Mini-Batch {step} Before Step {start_from_step}.')
+                #     continue
+                #
+                # WARNING: Strictly speaking, this approach does NOT resume training from the exact
+                # stopping point. The model will re-process some data from the beginning of the epoch
+                # where training was interrupted. For a truly strict resume mechanism, future developers
+                # should consider:
+                #   1. Saving and restoring the exact dataloader state (including sampler state)
+                #   2. Implementing step-level resume with proper data skipping
+                #   3. Using deterministic data loading to ensure reproducibility
+                # The current simplified approach prioritizes code clarity over strict resume fidelity.
 
                 itr = itr + 1
 
@@ -414,20 +425,31 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         model.train()
         optimizer.zero_grad()
         itr = start_from_itr
-        # Epoch 1 .. self.options.life_cycle
-        for epoch in range(1, self.options.life_cycle + 1):
-            if epoch < start_from_epoch:
-                logger.info(f'-> Skip Epoch {epoch} Before Epoch {start_from_epoch}.')
-                continue
-
+        # Epoch: start_from_epoch (or 1) .. self.options.life_cycle
+        # Optimization: When resuming from checkpoint, directly start from start_from_epoch
+        # instead of range(1, life_cycle+1) to avoid unnecessary iterations.
+        for epoch in range(max(1, start_from_epoch), self.options.life_cycle + 1):
             tic = time.time()
             on_epoch_begin_fn(epoch)
             # Step 1 .. len(train_dataloader)
             for step, minibatch in enumerate(train_dataloader, start=1):
                 on_step_begin_fn(epoch)
-                if epoch == start_from_epoch and step <= start_from_step:
-                    logger.info(f'-> Skip Mini-Batch {step} Before Step {start_from_step}.')
-                    continue
+                # NOTE: Step-level resume is optional and can be omitted for simplicity.
+                # When resuming training, we can iterate through the entire dataset from the beginning
+                # of the current epoch. Only epoch and itr need to be tracked for correct checkpoint resume.
+                # The following step-skipping logic is commented out to allow full dataset iteration:
+                # if epoch == start_from_epoch and step <= start_from_step:
+                #     logger.info(f'-> Skip Mini-Batch {step} Before Step {start_from_step}.')
+                #     continue
+                #
+                # WARNING: Strictly speaking, this approach does NOT resume training from the exact
+                # stopping point. The model will re-process some data from the beginning of the epoch
+                # where training was interrupted. For a truly strict resume mechanism, future developers
+                # should consider:
+                #   1. Saving and restoring the exact dataloader state (including sampler state)
+                #   2. Implementing step-level resume with proper data skipping
+                #   3. Using deterministic data loading to ensure reproducibility
+                # The current simplified approach prioritizes code clarity over strict resume fidelity.
 
                 itr = itr + 1
 
