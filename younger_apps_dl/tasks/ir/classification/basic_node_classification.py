@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 20:51:49
+# Last Modified time: 2026-01-26 16:34:32
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -153,7 +153,6 @@ class BasicNodeClassification(BaseTask[BasicNodeClassificationOptions]):
             self.scheduler,
             self.train_dataset,
             self.valid_dataset,
-            self._initialize_fn_,
             self._train_fn_,
             self._valid_fn_,
             initialize_fn=self._initialize_fn_,
