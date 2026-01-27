@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-24 08:54:32
+# Last Modified time: 2026-01-27 14:29:55
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -32,12 +32,9 @@ class BasicPreprocess(BaseTask[BasicPreprocessOptions]):
     It is designed to handle the preprocessing stage of graph-based data for various applications.
     """
     OPTIONS = BasicPreprocessOptions
-
-    @property
-    def required_option_names_by_stage(self) -> dict[str, list[str]]:
-        return {
-            'preprocess': ['preprocessor'],
-        }
+    STAGE_REQUIRED_OPTION = {
+        'preprocess': ['preprocessor'],
+    }
 
     def _preprocess_(self):
         preprocessor = StandardPreprocessor(self.options.preprocessor)

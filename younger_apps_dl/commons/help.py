@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 19:38:32
+# Last Modified time: 2026-01-27 14:09:40
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -82,12 +82,26 @@ def get_placeholder(data_type: type | None):
     return f'"<{getattr(data_type, "__name__", "special")}>"'
 
 
-def generate_helping_for_pydantic_model(pydantic_model: Type[BaseModel], location: str = '') -> list[str]:
+def generate_helping_for_pydantic_model(pydantic_model: Type[BaseModel], location: str = '', include_fields: list[str] | None = None) -> list[str]:
+    """Generate TOML configuration template for a Pydantic model.
+
+    Args:
+        pydantic_model: The Pydantic model class to generate configuration for.
+        location: The current location in the TOML hierarchy (for nested models).
+        include_fields: If provided, only generate configuration for these field names.
+                       If None, all fields will be included.
+
+    Returns:
+        List of TOML configuration lines.
+    """
     toml_lines = list()
     nested_fields = list()
     global_fields = list()
 
     for name, annotation in pydantic_model.__annotations__.items():
+        # Skip field if include_fields is specified and this field is not included
+        if include_fields is not None and name not in include_fields:
+            continue
         annotation = remove_none(annotation)
         origin = get_origin(annotation)
 

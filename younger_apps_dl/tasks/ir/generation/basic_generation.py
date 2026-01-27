@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 22:53:07
+# Last Modified time: 2026-01-27 14:55:19
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -107,16 +107,13 @@ class BasicGeneration(BaseTask[BasicGenerationOptions]):
     One can copy and modify this class to implement more advanced generation tasks as needed.
     """
     OPTIONS = BasicGenerationOptions
-
-    @property
-    def required_option_names_by_stage(self) -> dict[str, list[str]]:
-        return {
-            'preprocess': ['preprocessor'],
-            'train': ['train_dataset', 'valid_dataset', 'model', 'optimizer', 'scheduler', 'trainer'],
-            'evaluate': ['test_dataset', 'model', 'evaluator'],
-            'predict': ['predict_dataset', 'model', 'predictor'],
-            'postprocess': [],
-        }
+    STAGE_REQUIRED_OPTION = {
+        'preprocess': ['preprocessor'],
+        'train': ['train_dataset', 'valid_dataset', 'model', 'optimizer', 'scheduler', 'trainer'],
+        'evaluate': ['test_dataset', 'model', 'evaluator'],
+        'predict': ['predict_dataset', 'model', 'predictor'],
+        'postprocess': [],
+    }
 
     def _preprocess_(self):
         preprocessor = StandardPreprocessor(self.options.preprocessor)
