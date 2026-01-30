@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-27 14:48:09
+# Last Modified time: 2026-01-30 11:06:59
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -24,17 +24,27 @@ from younger.commons.io import load_toml
 
 from younger_apps_dl.commons.help import generate_helping_for_pydantic_model
 from younger_apps_dl.commons.logging import equip_logger
+from younger_apps_dl.commons.optional import find_user_modules, load_user_modules
 
 
 @click.group(name='younger-apps-dl')
-def main():
-    pass
+@click.option('--optional-dirpath', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=pathlib.Path), default=None, help='Path to user-defined modules directory. It should contain subdirectories like models/, tasks/, datasets/, engines/ etc.')
+@click.pass_context
+def main(ctx: click.Context, optional_dirpath: pathlib.Path):
+    """Younger Apps DL - Deep Learning Application Framework"""
+    ctx.ensure_object(dict)
+
+    find_user_modules()
+    if optional_dirpath:
+        load_user_modules(optional_dirpath)
+        ctx.obj['optional_dirpath'] = optional_dirpath
 
 
 @main.command(name='glance')
 @click.option('--some-type', required=True, type=click.Choice(['models', 'datasets', 'engines', 'tasks'], case_sensitive=True), help='Indicates the type of task will be used.')
 @click.option('--logging-filepath', required=False, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the log file; if not provided, defaults to outputting to the terminal only.')
-def glance(some_type: Literal['models', 'datasets', 'engines', 'tasks'], logging_filepath: pathlib.Path):
+@click.pass_context
+def glance(ctx: click.Context, some_type: Literal['models', 'datasets', 'engines', 'tasks'], logging_filepath: pathlib.Path):
     """
     Displays all possible candidates under a specific `type`.
 
@@ -92,7 +102,8 @@ def glance(some_type: Literal['models', 'datasets', 'engines', 'tasks'], logging
 @click.option('--toml-path', required=True, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the configuration file.')
 @click.option('--task-step', required=False, type=click.Choice(['All', 'train', 'evaluate', 'predict', 'preprocess', 'postprocess'], case_sensitive=True), default='All', help='Indicates the step of task. If provided, only options for this step will be included.')
 @click.option('--logging-filepath', required=False, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the log file; if not provided, defaults to outputting to the terminal only.')
-def option(task_kind: str, task_name: str, task_step: str, toml_path: pathlib.Path, logging_filepath: pathlib.Path):
+@click.pass_context
+def option(ctx: click.Context, task_kind: str, task_name: str, task_step: str, toml_path: pathlib.Path, logging_filepath: pathlib.Path):
     """
     Gets the configuration template for a specific task.
 
@@ -142,7 +153,8 @@ def option(task_kind: str, task_name: str, task_step: str, toml_path: pathlib.Pa
 @click.option('--task-step', required=True, type=click.Choice(['train', 'evaluate', 'predict', 'preprocess', 'postprocess'], case_sensitive=True), help='Indicates the step of task.')
 @click.option('--toml-path', required=True, type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the configuration file.')
 @click.option('--logging-filepath', required=False, type=click.Path(exists=False, file_okay=True, dir_okay=False, path_type=pathlib.Path), default=None, help='Path to the log file; if not provided, defaults to outputting to the terminal only.')
-def launch(task_kind: str, task_name: str, task_step: str, toml_path: pathlib.Path, logging_filepath: pathlib.Path):
+@click.pass_context
+def launch(ctx: click.Context, task_kind: str, task_name: str, task_step: str, toml_path: pathlib.Path, logging_filepath: pathlib.Path):
     """
     Launches a specific task with given configuration.
 
