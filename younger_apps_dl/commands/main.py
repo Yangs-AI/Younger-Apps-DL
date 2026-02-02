@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-30 11:06:59
+# Last Modified time: 2026-02-01 21:46:18
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -24,20 +24,16 @@ from younger.commons.io import load_toml
 
 from younger_apps_dl.commons.help import generate_helping_for_pydantic_model
 from younger_apps_dl.commons.logging import equip_logger
-from younger_apps_dl.commons.optional import find_user_modules, load_user_modules
+from younger_apps_dl.commons.optional import load_user_modules
 
 
 @click.group(name='younger-apps-dl')
-@click.option('--optional-dirpath', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=pathlib.Path), default=None, help='Path to user-defined modules directory. It should contain subdirectories like models/, tasks/, datasets/, engines/ etc.')
+@click.option('--optional-dirpath', type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=pathlib.Path), default=None, help='Path to user-defined modules directory. It must provide an entry module register.py at the root.')
 @click.pass_context
-def main(ctx: click.Context, optional_dirpath: pathlib.Path):
+def main(ctx: click.Context, optional_dirpath: pathlib.Path | None):
     """Younger Apps DL - Deep Learning Application Framework"""
     ctx.ensure_object(dict)
-
-    find_user_modules()
-    if optional_dirpath:
-        load_user_modules(optional_dirpath)
-        ctx.obj['optional_dirpath'] = optional_dirpath
+    load_user_modules(optional_dirpath)
 
 
 @main.command(name='glance')
