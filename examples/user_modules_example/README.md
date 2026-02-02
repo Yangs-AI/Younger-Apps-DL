@@ -1,26 +1,27 @@
-# 用户模块示例
+# User Modules Example
 
-这是一个完整的用户自定义模块示例，展示如何扩展 Younger Apps DL。
+This is a complete user module example showing how to extend Younger Apps DL.
 
-## 目录结构
+## Directory Structure
 
 ```
 user_modules_example/
-├── README.md (本文件)
+├── README.md (this file)
+├── register.py
 ├── models/
 │   └── simple_mlp.py
 ├── tasks/
 │   └── demo_task.py
-└── run_example.sh
+└── run.sh
 ```
 
-## 使用方法
+## Usage
 
-### 方法1: 使用环境变量
+### Method 1: Environment variable
 
 ```bash
-# 设置环境变量
-export YOUNGER_APPS_DL_USER_MODULES=/home/jason/Development/Younger/younger/apps/dl/examples/user_modules_example
+# Set environment variable
+export YADL_OPTIONAL_DIRPATH=/home/jason/Development/Younger/younger/apps/dl/examples/user_modules_example
 
 # 查看注册的组件
 younger-apps-dl glance --some-type models
@@ -28,52 +29,52 @@ younger-apps-dl glance --some-type tasks
 
 # 生成配置文件
 younger-apps-dl option \
-    --task-kind example \
+    --task-kind optional \
     --task-name simple_demo \
     --task-step train \
     --toml-path demo_config.toml
 
 # 运行任务
 younger-apps-dl launch \
-    --task-kind example \
+    --task-kind optional \
     --task-name simple_demo \
     --task-step train \
     --toml-path demo_config.toml
 ```
 
-### 方法2: 使用命令行参数
+### Method 2: CLI argument
 
 ```bash
-# 直接指定用户模块目录
-younger-apps-dl --user-modules . glance --some-type tasks
+# Specify user modules directory
+younger-apps-dl --optional-dirpath . glance --some-type tasks
 ```
 
-### 方法3: 使用脚本
+### Method 3: Use the script
 
 ```bash
-chmod +x run_example.sh
-./run_example.sh
+chmod +x run.sh
+./run.sh
 ```
 
-## 组件说明
+## Components
 
-### SimpleMLP 模型
-- 注册名: `simple_mlp_example`
-- 一个简单的多层感知机
-- 可配置输入、隐藏层和输出维度
+### SimpleMLP Model
+- Registry name: `simple_mlp_example`
+- A simple MLP
+- Configurable input/hidden/output dimensions
 
-### SimpleDemoTask 任务
-- Task kind: `example`
+### SimpleDemoTask Task
+- Task kind: `optional`
 - Task name: `simple_demo`
-- 演示了如何创建一个简单的训练任务
-- 展示了如何使用自定义模型
+- Demonstrates a simple training task
+- Demonstrates using a custom model
 
-## 扩展此示例
+## Extend This Example
 
-你可以：
-1. 在 `models/` 下添加更多模型
-2. 在 `tasks/` 下添加更多任务
-3. 创建 `datasets/` 目录添加自定义数据集
-4. 创建 `engines/` 目录添加自定义训练引擎
+You can:
+1. Add more models under `models/`
+2. Add more tasks under `tasks/`
+3. Create a `datasets/` directory for custom datasets
+4. Create an `engines/` directory for custom engines
 
-所有新添加的 Python 文件都会被自动发现和加载！
+Remember: only modules imported by `register.py` will be loaded.
