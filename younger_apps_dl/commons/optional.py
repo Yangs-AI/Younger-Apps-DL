@@ -77,26 +77,28 @@ def load_user_modules(optional_dirpath: pathlib.Path | None = None):
         optional_dirpath = pathlib.Path(env_optional_dirpath)
 
     if optional_dirpath.exists():
-        entry_module_name = 'register'
-        entry_module_filepath = optional_dirpath.joinpath(f'{entry_module_name}.py')
-        if entry_module_filepath.is_file():
-            logger.info(f'Loading user modules from: {optional_dirpath}')
-            logger.info(f'Expecting entry module: {entry_module_name}.py in {optional_dirpath}')
+        package_init_filepath = optional_dirpath.joinpath('__init__.py')
+        is_package_dir = package_init_filepath.is_file()
 
-            with manage_sys_path(optional_dirpath):
+        logger.info(f'Loading user modules from: {optional_dirpath}')
+
+        if is_package_dir:
+            package_name = optional_dirpath.name
+            package_parent = optional_dirpath.parent
+            logger.info(f'Package detected. Using {package_init_filepath} as entry.')
+            with manage_sys_path(package_parent):
                 try:
-                    module = importlib.import_module(entry_module_name)
+                    module = importlib.import_module(package_name)
                 except Exception as exception:
                     raise ImportError(
-                        f'Failed to import entry module "{entry_module_name}" from {optional_dirpath}. '
-                        f'Please provide {entry_module_name}.py under {optional_dirpath}.'
+                        f'Failed to import package "{package_name}" from {optional_dirpath}. '
+                        f'Please ensure {package_init_filepath} exists and keep imports there.'
                     ) from exception
-
-            logger.info(f'Successfully loaded entry module: {entry_module_name}')
+            logger.info(f'Successfully loaded package: {package_name}')
         else:
             raise FileNotFoundError(
-                f'Missing entry module file: {entry_module_filepath}. '
-                f'Please provide {entry_module_name}.py under {optional_dirpath}.'
+                f'Missing package entry file: {package_init_filepath}. '
+                f'Please provide __init__.py under {optional_dirpath}.'
             )
     else:
         logger.info('No user-defined modules directory provided or found in environment variable YADL_OPTIONAL_DIRPATH.')

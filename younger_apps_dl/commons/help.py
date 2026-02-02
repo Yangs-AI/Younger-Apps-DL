@@ -91,6 +91,13 @@ def generate_helping_for_pydantic_model(pydantic_model: Type[BaseModel], locatio
         include_fields: If provided, only generate configuration for these field names.
                        If None, all fields will be included.
 
+    Notes:
+        When include_fields is provided, only stage option blocks (fields that are
+        BaseModel or containers of BaseModel) are filtered by include_fields. Avoid
+        nesting BaseModel inside those stage option blocks, or nested BaseModel
+        sections may be filtered out as well. Keeping stage options flat improves
+        clarity and keeps templates concise.
+
     Returns:
         List of TOML configuration lines.
     """
@@ -98,21 +105,37 @@ def generate_helping_for_pydantic_model(pydantic_model: Type[BaseModel], locatio
     nested_fields = list()
     global_fields = list()
 
-    for name, annotation in pydantic_model.__annotations__.items():
-        # Skip field if include_fields is specified and this field is not included
-        if include_fields is not None and name not in include_fields:
-            continue
+    for name, field_info in pydantic_model.model_fields.items():
+        annotation = field_info.annotation if field_info.annotation is not None else Any
         annotation = remove_none(annotation)
         origin = get_origin(annotation)
 
-        default = pydantic_model.model_fields[name].default
+        is_stage_option = False
+        if is_base_model(annotation):
+            is_stage_option = True
+        elif origin is list:
+            element_type = get_args(annotation)[0] if len(get_args(annotation)) != 0 else Any
+            element_type = remove_none(element_type)
+            if is_base_model(element_type):
+                is_stage_option = True
+        elif origin is dict:
+            value_type = get_args(annotation)[1] if len(get_args(annotation)) != 0 else Any
+            value_type = remove_none(value_type)
+            if is_base_model(value_type):
+                is_stage_option = True
+
+        # Only filter stage option blocks when include_fields is specified
+        if include_fields is not None and name not in include_fields and is_stage_option:
+            continue
+
+        default = field_info.default
         if isinstance(default, bool):
             default = f'{repr(default).lower()}'
         elif isinstance(default, str):
             default = f'"{default}"'
         else:
             default = f'{repr(default)}' if default is not None and default is not PydanticUndefined else ''
-        description = pydantic_model.model_fields[name].description
+        description = field_info.description
         description = f' # {description}' if description is not None else ''
 
         if origin is list:
