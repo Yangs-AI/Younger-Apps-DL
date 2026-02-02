@@ -4,7 +4,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-02-02 02:32:16
+# Last Modified time: 2026-02-02 09:17:12
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -19,11 +19,11 @@ echo "==========================================="
 echo "Younger Apps DL - User Modules Example"
 echo "==========================================="
 echo ""
-echo "User modules directory: $SCRIPT_DIR"
+echo "User modules directory: $SCRIPT_DIR/user_modules"
 echo ""
 
 # Method 1: Environment variable
-export YADL_OPTIONAL_DIRPATH="$SCRIPT_DIR"
+export YADL_OPTIONAL_DIRPATH="$SCRIPT_DIR/user_modules"
 
 echo "1. Loading registered models..."
 echo "-------------------------------------------"
@@ -43,7 +43,7 @@ younger-apps-dl option \
     --task-name simple_demo \
     --task-step train \
     --toml-path "$CONFIG_FILE"
-echo "  Configuration file generated: $CONFIG_FILE"
+echo "Configuration file generated: $CONFIG_FILE"
 echo ""
 
 echo "4. Running training task..."
@@ -63,6 +63,6 @@ echo "You can try:"
 echo "  - Modify $SCRIPT_DIR/models/simple_mlp.py"
 echo "  - Modify $SCRIPT_DIR/tasks/demo_task.py"
 echo "  - Add new models or tasks"
-echo "  - Update register.py to import new modules"
+echo "  - Update __init__.py to import new modules"
 echo ""
 echo "Then rerun this script to see the changes!"

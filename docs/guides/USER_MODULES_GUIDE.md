@@ -2,17 +2,17 @@
 
 ## Overview
 
-Younger Apps DL allows you to extend custom Models, Tasks, Datasets, and Engines by providing a directory. You only need to create a directory and provide an entry file `register.py` that imports the modules you want to register.
+Younger Apps DL allows you to extend custom Models, Tasks, Datasets, and Engines by providing a directory. The directory you pass must be a Python package (contains `__init__.py`) and import your modules in `__init__.py`.
 
 ## Quick Start
 
 ### 1. Create the user module directory
 
-Create the following structure in your project:
+Create the following structure in your project (package mode):
 
 ```
 my_dl_modules/
-├── register.py
+├── __init__.py
 ├── models/
 │   ├── __init__.py
 │   ├── my_model.py
@@ -30,8 +30,7 @@ my_dl_modules/
 ```
 
 **Notes**:
-- `register.py` is required at the root of the directory.
-- `register.py` should only import modules to trigger registration. Avoid heavy runtime logic.
+- Put all registration imports in `__init__.py` and keep it minimal (avoid heavy runtime logic).
 - Directory names are not enforced (`models/`, `tasks/`, etc. are just conventions).
 
 ### 2. Write your custom components
@@ -174,6 +173,7 @@ my_project/
 ├── configs/
 │   └── train.toml
 ├── custom_modules/
+│   ├── __init__.py
 │   ├── models/
 │   │   └── my_model.py
 │   └── tasks/
@@ -199,7 +199,7 @@ younger-apps-dl --optional-dirpath "$PROJECT_DIR/custom_modules" launch \
 
 ```bash
 mkdir -p my_dl_modules/{models,tasks,datasets,engines}
-touch my_dl_modules/register.py
+touch my_dl_modules/__init__.py
 ```
 
 ### Step 2: Write custom components
@@ -250,13 +250,13 @@ class DemoTask(BaseTask[DemoOptions]):
         print(f"Postprocess: {self.options.message}")
 ```
 
-### Step 3: Write register.py
+### Step 3: Write __init__.py (entry)
 
-In `my_dl_modules/register.py`, import the modules to be registered:
+In `my_dl_modules/__init__.py`, import the modules to be registered:
 
 ```python
-from models import simple_nn
-from tasks import demo_task
+from .models import simple_nn
+from .tasks import demo_task
 ```
 
 ### Step 4: Verify loading
@@ -313,7 +313,7 @@ my_dl_modules/
         └── text_generation.py
 ```
 
-Only modules imported by `register.py` will be loaded (no recursive scan).
+Only modules imported by `__init__.py` will be loaded (no recursive scan).
 
 ### 2. Use a custom Model inside a custom Task
 
@@ -363,7 +363,7 @@ class MyModel(torch.nn.Module):
 ### Q1: Why aren't my modules loaded?
 
 Check:
-1. `register.py` exists and imports the modules you want to register
+1. `__init__.py` exists and imports the modules you want to register
 2. The Python files have no syntax errors
 3. You used the correct `@register_*` decorators
 4. The path is correct (test with an absolute path)

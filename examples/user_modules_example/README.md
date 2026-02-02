@@ -7,12 +7,13 @@ This is a complete user module example showing how to extend Younger Apps DL.
 ```
 user_modules_example/
 ├── README.md (this file)
-├── register.py
-├── models/
-│   └── simple_mlp.py
-├── tasks/
-│   └── demo_task.py
 └── run.sh
+└── user_modules/
+    ├── __init__.py
+    ├── models/
+    │   └── simple_mlp.py
+    └── tasks/
+        └── demo_task.py
 ```
 
 ## Usage
@@ -21,7 +22,7 @@ user_modules_example/
 
 ```bash
 # Set environment variable
-export YADL_OPTIONAL_DIRPATH=/home/jason/Development/Younger/younger/apps/dl/examples/user_modules_example
+export YADL_OPTIONAL_DIRPATH=/home/jason/Development/Younger/younger/apps/dl/examples/user_modules_example/user_modules
 
 # 查看注册的组件
 younger-apps-dl glance --some-type models
@@ -46,7 +47,7 @@ younger-apps-dl launch \
 
 ```bash
 # Specify user modules directory
-younger-apps-dl --optional-dirpath . glance --some-type tasks
+younger-apps-dl --optional-dirpath ./user_modules glance --some-type tasks
 ```
 
 ### Method 3: Use the script
@@ -72,9 +73,9 @@ chmod +x run.sh
 ## Extend This Example
 
 You can:
-1. Add more models under `models/`
-2. Add more tasks under `tasks/`
-3. Create a `datasets/` directory for custom datasets
-4. Create an `engines/` directory for custom engines
+1. Add more models under `user_modules/models/`
+2. Add more tasks under `user_modules/tasks/`
+3. Create a `user_modules/datasets/` directory for custom datasets
+4. Create a `user_modules/engines/` directory for custom engines
 
-Remember: only modules imported by `register.py` will be loaded.
+Remember: only modules imported by `__init__.py` will be loaded.

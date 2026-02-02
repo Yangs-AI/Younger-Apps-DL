@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-02-02 17:09:12
+# Last Modified time: 2026-02-02 09:19:27
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -19,32 +19,36 @@ A simple demo task example.
 """
 
 import torch
-import pathlib
-from typing import Optional, Tuple, List, Callable
+from typing import Tuple, List, Callable
 from pydantic import BaseModel, Field
 
 from younger_apps_dl.tasks import BaseTask, register_task
 from younger_apps_dl.engines import StandardTrainer, StandardTrainerOptions, StandardEvaluator, StandardEvaluatorOptions, StandardPredictor, StandardPredictorOptions
 from younger_apps_dl.commons.logging import logger
 
-from models import SimpleMLP
+from ..models import SimpleMLP
+
+
+class SimpleDemoModelOptions(BaseModel):
+    """Model configuration options (flat, reusable)."""
+    input_dim: int = Field(128, description='Model input dimension')
+    hidden_dim: int = Field(256, description='Model hidden layer dimension')
+    output_dim: int = Field(10, description='Model output dimension')
 
 
 class SimpleDemoTaskOptions(BaseModel):
     """SimpleDemoTask configuration options."""
-    # Model configuration
-    model_name: str = Field('simple_mlp_example', description='Model name to use')
-    input_dim: int = Field(128, description='Model input dimension')
-    hidden_dim: int = Field(256, description='Model hidden layer dimension')
-    output_dim: int = Field(10, description='Model output dimension')
-    # Training configuration
+    """Training configuration options (flat, reusable)."""
     learning_rate: float = Field(0.001, description='Learning rate')
     batch_size: int = Field(32, description='Batch size')
     num_epochs: int = Field(10, description='Number of epochs to train')
     train_samples: int = Field(256, description='Number of synthetic training samples')
     valid_samples: int = Field(64, description='Number of synthetic validation samples')
+
+    # Model configuration
+    model: SimpleDemoModelOptions = Field(default_factory=SimpleDemoModelOptions, description='Model configuration options')
+
     # Trainer configuration
-    checkpoint_savepath: pathlib.Path = Field('./.cache/demo_task', description='Checkpoint directory for StandardTrainer')
     trainer: StandardTrainerOptions | None = Field(None, description='Standard trainer options (optional)')
     evaluator: StandardEvaluatorOptions | None = Field(None, description='Standard evaluator options (optional)')
     predictor: StandardPredictorOptions | None = Field(None, description='Standard predictor options (optional)')
@@ -67,9 +71,9 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
 
     STAGE_REQUIRED_OPTION = {
         'preprocess': [],
-        'train': [],
-        'evaluate': [],
-        'predict': [],
+        'train': ['trainer', 'model'],
+        'evaluate': ['evaluator', 'model'],
+        'predict': ['predictor'],
         'postprocess': [],
     }
 
@@ -117,6 +121,18 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
 
         logger.info("Evaluation completed!")
 
+    def _predict_(self):
+        """Prediction stage."""
+        logger.info("Starting prediction...")
+        self.model = self._build_model_()
+        predictor = StandardPredictor(self.options.predictor)
+        predictor.run(
+            self.model,
+            predict_raw_fn=self._predict_raw_fn_,
+            initialize_fn=self._initialize_fn_,
+        )
+        logger.info("Prediction completed!")
+
     def _postprocess_(self):
         """Postprocess stage."""
         logger.info("Starting postprocess...")
@@ -128,9 +144,9 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
         logger.info("Building model: SimpleMLP")
 
         model = SimpleMLP(
-            input_dim=self.options.input_dim,
-            hidden_dim=self.options.hidden_dim,
-            output_dim=self.options.output_dim,
+            input_dim=self.options.model.input_dim,
+            hidden_dim=self.options.model.hidden_dim,
+            output_dim=self.options.model.output_dim,
         )
 
         logger.info(f"Model built: {type(model).__name__}")
@@ -146,8 +162,8 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
         return scheduler
 
     def _build_dataset_(self, sample_count: int) -> torch.utils.data.TensorDataset:
-        inputs = torch.randn(sample_count, self.options.input_dim)
-        targets = torch.randint(0, self.options.output_dim, (sample_count,))
+        inputs = torch.randn(sample_count, self.options.model.input_dim)
+        targets = torch.randint(0, self.options.model.output_dim, (sample_count,))
         return torch.utils.data.TensorDataset(inputs, targets)
 
     def _initialize_fn_(self, model: torch.nn.Module) -> None:
@@ -169,6 +185,13 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
                 losses.append(loss)
         loss = torch.stack(losses).mean()
         return self._compute_metrics_(loss.item())
+
+    def _test_fn_(self, dataloader: torch.utils.data.DataLoader) -> Tuple[List[str], List[torch.Tensor], List[Callable[[float], str]]]:
+        return self._valid_fn_(dataloader)
+
+    def _predict_raw_fn_(self, *args, **kwargs):
+        logger.info("Predict raw fn is not implemented for SimpleDemoTask.")
+        raise NotImplementedError("Predict raw fn is not implemented for SimpleDemoTask")
 
     def _on_update_fn_(self, metrics: Tuple[List[str], List[torch.Tensor], List[Callable[[float], str]]]) -> None:
         self.optimizer.step()
@@ -195,7 +218,6 @@ if __name__ == '__main__':
         input_dim=10,
         hidden_dim=20,
         output_dim=5,
-        num_epochs=3
     )
 
     task = SimpleDemoTask(options)
