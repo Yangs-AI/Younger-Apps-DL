@@ -6,8 +6,8 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-27 14:29:00
-# Copyright (c) 2024 - 2025 Yangs.AI
+# Last Modified time: 2026-02-02 02:16:24
+# Copyright (c) 2024 - 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
 # LICENSE file in the root directory of this source tree.
@@ -87,17 +87,18 @@ class BaseTask(OptionsMixin[OPTIONS_TYPE], ABC):
         raise NotImplementedError
 
 
-TASK_REGISTRY: dict[ Literal['ir', 'core'], dict[ str, Type[BaseTask] ] ] = dict(
+TASK_REGISTRY: dict[ Literal['ir', 'core', 'optional'], dict[ str, Type[BaseTask] ] ] = dict(
     ir = dict(),
     core = dict(),
+    optional = dict(),
 )
 
 
 def register_task(
-    kind: Literal['ir', 'core'],
+    kind: Literal['ir', 'core', 'optional'],
     name: str
 ):
-    assert kind in {'ir', 'core'}
+    assert kind in {'ir', 'core', 'optional'}
     assert name not in TASK_REGISTRY[kind]
     def wrapper(cls):
         assert issubclass(cls, BaseTask)
