@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-02-02 03:21:26
+# Last Modified time: 2026-02-02 17:09:12
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -27,7 +27,7 @@ from younger_apps_dl.tasks import BaseTask, register_task
 from younger_apps_dl.engines import StandardTrainer, StandardTrainerOptions, StandardEvaluator, StandardEvaluatorOptions, StandardPredictor, StandardPredictorOptions
 from younger_apps_dl.commons.logging import logger
 
-from ..models import SimpleMLPModel
+from models import SimpleMLP
 
 
 class SimpleDemoTaskOptions(BaseModel):
@@ -125,7 +125,7 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
     def _build_model_(self) -> torch.nn.Module:
         """Build model helper."""
 
-        logger.info("Building model: SimpleMLPModel")
+        logger.info("Building model: SimpleMLP")
 
         model = SimpleMLP(
             input_dim=self.options.input_dim,
@@ -187,7 +187,7 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
 
 
 if __name__ == '__main__':
-    #
+    # Simple test for SimpleDemoTask
     print("Test SimpleDemoTask...")
 
     # Create 
@@ -197,23 +197,17 @@ if __name__ == '__main__':
         output_dim=5,
         num_epochs=3
     )
-    
+
     task = SimpleDemoTask(options)
-    
     # Test each stage
     print("\n--- Test Preprocess ---")
     task.preprocess()
-    
     print("\n--- Test Train ---")
     task.train()
-    
     print("\n--- Test Evaluate ---")
     task.evaluate()
-    
     print("\n--- Test Predict ---")
     task.predict()
-    
-    print("\n--- Test Postprecess ---")
+    print("\n--- Test Postprocess ---")
     task.postprocess()
-    
     print("\n✓ All Test Passed!")
