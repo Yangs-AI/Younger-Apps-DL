@@ -4,7 +4,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-02-02 09:17:12
+# Last Modified time: 2026-02-03 16:55:01
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -66,3 +66,6 @@ echo "  - Add new models or tasks"
 echo "  - Update __init__.py to import new modules"
 echo ""
 echo "Then rerun this script to see the changes!"
+
+echo "You can also run command to test full pipeline:"
+echo "   python -m user_modules.test"

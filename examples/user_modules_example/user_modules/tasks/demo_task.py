@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-02-03 12:48:51
+# Last Modified time: 2026-02-03 16:36:40
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -42,8 +42,6 @@ class SimpleDemoTaskOptions(BaseModel):
     """SimpleDemoTask configuration options."""
     """Training configuration options (flat, reusable)."""
     learning_rate: float = Field(0.001, description='Learning rate')
-    batch_size: int = Field(32, description='Batch size')
-    num_epochs: int = Field(10, description='Number of epochs to train')
     train_samples: int = Field(256, description='Number of synthetic training samples')
     valid_samples: int = Field(64, description='Number of synthetic validation samples')
 
@@ -52,16 +50,30 @@ class SimpleDemoTaskOptions(BaseModel):
 
     # Trainer configuration
     trainer: StandardTrainerOptions = Field(
-        default_factory=lambda: StandardTrainerOptions(checkpoint_savepath=pathlib.Path('./checkpoints')),
+        default_factory=lambda: StandardTrainerOptions(
+            checkpoint_savepath=pathlib.Path('./checkpoints'),
+            checkpoint_basename='demo_task',
+            life_cycle=10,
+            report_period=1,
+            update_period=1,
+            lfresh_period=16,
+            saving_period=16,
+            train_batch_size=32,
+            valid_batch_size=64,
+            worker_number=4,
+        ),
         description='Standard trainer options (optional)'
     )
     evaluator: StandardEvaluatorOptions = Field(
-        default_factory=lambda: StandardEvaluatorOptions(checkpoint_filepath=pathlib.Path('./checkpoints')),
+        default_factory=lambda: StandardEvaluatorOptions(
+            checkpoint_filepath=pathlib.Path('./checkpoints/demo_task_latest.cp'),
+            batch_size=64,
+        ),
         description='Standard evaluator options (optional)'
     )
     predictor: StandardPredictorOptions = Field(
         default_factory=lambda: StandardPredictorOptions(
-            checkpoint_filepath=pathlib.Path('./checkpoints'),
+            checkpoint_filepath=pathlib.Path('./checkpoints/demo_task_latest.cp'),
             source='raw',
             raw=RawOptions(load_dirpath=pathlib.Path('./inputs'), save_dirpath=pathlib.Path('./outputs')),
         ),
@@ -117,6 +129,7 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
             self._valid_fn_,
             initialize_fn=self._initialize_fn_,
             on_update_fn=self._on_update_fn_,
+            on_lfresh_fn=self._on_lfresh_fn_,
             dataloader_type='pth'
         )
 
@@ -204,13 +217,70 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
     def _test_fn_(self, dataloader: torch.utils.data.DataLoader) -> Tuple[List[str], List[torch.Tensor], List[Callable[[float], str]]]:
         return self._valid_fn_(dataloader)
 
-    def _predict_raw_fn_(self, *args, **kwargs):
-        logger.info("Predict raw fn is not implemented for SimpleDemoTask.")
-        raise NotImplementedError("Predict raw fn is not implemented for SimpleDemoTask")
+    def _predict_raw_fn_(self, load_dirpath: pathlib.Path, save_dirpath: pathlib.Path) -> None:
+        """
+        Predict on raw inputs from directory and save outputs.
 
-    def _on_update_fn_(self, metrics: Tuple[List[str], List[torch.Tensor], List[Callable[[float], str]]]) -> None:
+        Input files are loaded from text. Supported file types: .txt/.csv
+        Outputs are saved as <stem>_pred.txt to save_dirpath.
+        """
+        load_dirpath = pathlib.Path(load_dirpath)
+        save_dirpath = pathlib.Path(save_dirpath)
+        save_dirpath.mkdir(parents=True, exist_ok=True)
+
+        if not load_dirpath.exists() or not load_dirpath.is_dir():
+            logger.warning(f"Load dir not found: {load_dirpath}")
+            return
+
+        input_files = [p for p in load_dirpath.iterdir() if p.is_file() and p.suffix in {'.txt', '.csv'}]
+        if len(input_files) == 0:
+            logger.warning(f"No input files found in {load_dirpath}")
+            return
+
+        self.model.eval()
+        device = next(self.model.parameters()).device
+
+        with torch.no_grad():
+            for p in input_files:
+                text = p.read_text(encoding='utf-8').strip()
+                if len(text) == 0:
+                    logger.warning(f"Empty input file: {p}")
+                    continue
+
+                tokens = text.replace(',', ' ').split()
+                values = [float(t) for t in tokens]
+                if len(values) == 0:
+                    logger.warning(f"No numeric values in {p}")
+                    continue
+
+                input_dim = self.options.model.input_dim
+                if len(values) % input_dim != 0:
+                    logger.warning(f"Input size {len(values)} not divisible by input_dim={input_dim} in {p}")
+                    continue
+
+                rows = len(values) // input_dim
+                x = torch.tensor(values, dtype=torch.float32).view(rows, input_dim).to(device)
+                out = self.model(x)
+                out_cpu = out.detach().cpu()
+
+                out_path = save_dirpath / f"{p.stem}_pred.txt"
+                if out_cpu.ndim == 0:
+                    out_text = f"{out_cpu.item()}"
+                else:
+                    out_2d = out_cpu.view(out_cpu.shape[0], -1)
+                    out_text = "\n".join(
+                        " ".join(f"{v:.6f}" for v in row.tolist())
+                        for row in out_2d
+                    )
+                out_path.write_text(out_text, encoding='utf-8')
+
+        logger.info(f"Saved predictions to {save_dirpath}")
+
+    def _on_update_fn_(self) -> None:
         self.optimizer.step()
         self.optimizer.zero_grad()
+
+    def _on_lfresh_fn_(self, metrics: Tuple[List[str], List[torch.Tensor], List[Callable[[float], str]]]) -> None:
         metric_names, metric_values, _ = metrics
         metric_dict = dict(zip(metric_names, metric_values))
         if self.scheduler is not None and 'loss' in metric_dict:
@@ -222,29 +292,3 @@ class SimpleDemoTask(BaseTask[SimpleDemoTaskOptions]):
         ]
         metric_names_list, metric_values_list, metric_formats_list = zip(*metrics)
         return list(metric_names_list), list(metric_values_list), list(metric_formats_list)
-
-
-if __name__ == '__main__':
-    # Simple test for SimpleDemoTask
-    print("Test SimpleDemoTask...")
-
-    # Create 
-    options = SimpleDemoTaskOptions(
-        input_dim=10,
-        hidden_dim=20,
-        output_dim=5,
-    )
-
-    task = SimpleDemoTask(options)
-    # Test each stage
-    print("\n--- Test Preprocess ---")
-    task.preprocess()
-    print("\n--- Test Train ---")
-    task.train()
-    print("\n--- Test Evaluate ---")
-    task.evaluate()
-    print("\n--- Test Predict ---")
-    task.predict()
-    print("\n--- Test Postprocess ---")
-    task.postprocess()
-    print("\n✓ All Test Passed!")
