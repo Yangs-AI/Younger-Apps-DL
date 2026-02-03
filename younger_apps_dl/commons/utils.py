@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-13 10:12:38
+# Last Modified time: 2026-02-03 16:23:49
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -27,8 +27,8 @@ def make_reproducible(seed: int = 3407, mode: bool = True):
     random.seed(seed)
     numpy.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed(seed) if torch.cuda.is_available() else None
+    torch.cuda.manual_seed_all(seed) if torch.cuda.is_available() else None
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
     torch.use_deterministic_algorithms(mode)

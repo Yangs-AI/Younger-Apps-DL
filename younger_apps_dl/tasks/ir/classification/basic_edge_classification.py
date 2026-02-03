@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-27 14:59:57
+# Last Modified time: 2026-02-03 15:43:13
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -150,6 +150,7 @@ class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
             self._valid_fn_,
             initialize_fn=self._initialize_fn_,
             on_update_fn=self._on_update_fn_,
+            on_lfresh_fn=self._on_lfresh_fn_,
             on_epoch_end_fn=self._on_epoch_end_fn_,
             dataloader_type='pyg',
         )
@@ -336,13 +337,24 @@ class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
     def _test_fn_(self, dataloader: torch.utils.data.DataLoader) -> tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]:
         return self._valid_fn_(dataloader)
 
-    def _on_update_fn_(self, metrics: tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]) -> None:
+    def _on_update_fn_(self) -> None:
         """
         Callback function for each parameter update during training.
-        Users can customize this function to update parameters and adjust learning rate schedulers, or perform other actions based on metrics.
+        Users can customize this function to update parameters
         """
         self.optimizer.step()
         self.optimizer.zero_grad()
+
+    def _on_lfresh_fn_(self, metrics: tuple[list[str], list[torch.Tensor], list[Callable[[float], str]]]) -> None:
+        """
+        Callback function for each parameter update during training.
+        Some built-in schedulers (e.g., ReduceLROnPlateau) may require validation metrics to step.
+        Users can customize this function to adjust learning rate schedulers, or perform other actions based on metrics.
+        One may use validation metrics to adjust learning rates here.
+        Or one can leave it empty if not needed.
+        It is convenient to use _on_step_end_fn_ or _on_epoch_end_fn_ for epoch-level scheduler stepping.
+        """
+        pass
 
     def _on_epoch_end_fn_(self, epoch: int) -> None:
         """
