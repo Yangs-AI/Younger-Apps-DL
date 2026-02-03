@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-02-02 09:19:27
+# Last Modified time: 2026-02-03 12:48:51
 # Copyright (c) 2026 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -19,11 +19,13 @@ A simple demo task example.
 """
 
 import torch
+import pathlib
 from typing import Tuple, List, Callable
 from pydantic import BaseModel, Field
 
 from younger_apps_dl.tasks import BaseTask, register_task
 from younger_apps_dl.engines import StandardTrainer, StandardTrainerOptions, StandardEvaluator, StandardEvaluatorOptions, StandardPredictor, StandardPredictorOptions
+from younger_apps_dl.engines.predictors.standard import RawOptions
 from younger_apps_dl.commons.logging import logger
 
 from ..models import SimpleMLP
@@ -46,12 +48,25 @@ class SimpleDemoTaskOptions(BaseModel):
     valid_samples: int = Field(64, description='Number of synthetic validation samples')
 
     # Model configuration
-    model: SimpleDemoModelOptions = Field(default_factory=SimpleDemoModelOptions, description='Model configuration options')
+    model: SimpleDemoModelOptions = Field(default_factory=SimpleDemoModelOptions, description='Model configuration options (optional)')
 
     # Trainer configuration
-    trainer: StandardTrainerOptions | None = Field(None, description='Standard trainer options (optional)')
-    evaluator: StandardEvaluatorOptions | None = Field(None, description='Standard evaluator options (optional)')
-    predictor: StandardPredictorOptions | None = Field(None, description='Standard predictor options (optional)')
+    trainer: StandardTrainerOptions = Field(
+        default_factory=lambda: StandardTrainerOptions(checkpoint_savepath=pathlib.Path('./checkpoints')),
+        description='Standard trainer options (optional)'
+    )
+    evaluator: StandardEvaluatorOptions = Field(
+        default_factory=lambda: StandardEvaluatorOptions(checkpoint_filepath=pathlib.Path('./checkpoints')),
+        description='Standard evaluator options (optional)'
+    )
+    predictor: StandardPredictorOptions = Field(
+        default_factory=lambda: StandardPredictorOptions(
+            checkpoint_filepath=pathlib.Path('./checkpoints'),
+            source='raw',
+            raw=RawOptions(load_dirpath=pathlib.Path('./inputs'), save_dirpath=pathlib.Path('./outputs')),
+        ),
+        description='Standard predictor options (optional)'
+    )
     # Other configuration
     message: str = Field('Hello from SimpleDemoTask!', description='Demo message')
 
