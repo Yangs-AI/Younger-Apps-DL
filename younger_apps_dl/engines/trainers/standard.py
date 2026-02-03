@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-26 23:44:08
+# Last Modified time: 2026-02-03 16:25:56
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -41,6 +41,9 @@ class StandardTrainerOptions(BaseModel):
     checkpoint_basename: str = Field('checkpoint', description='Base name of the checkpoint for save/load.')
     checkpoint_keepdisk: int = Field(5, ge=1, description='Number of checkpoints to keep on disk.')
 
+    # Device Options
+    device_type: Literal['CPU', 'GPU'] = Field('GPU', description='Device type for model training. Use CUDA_VISIBLE_DEVICES environment variable to control GPU selection.')
+
     ## Resume Options
     resume_filepath: pathlib.Path | None  = Field(None, description='Path to load checkpoint. If None, train from scratch.')
     reset_iteration: bool = Field(True, description='Whether to reset the iteration status (epoch, step) when loading a checkpoint.')
@@ -54,7 +57,8 @@ class StandardTrainerOptions(BaseModel):
 
     report_period: int = Field(100, ge=1, description='Period (in steps) to report the training status.')
     update_period: int = Field(1, ge=1, description='Period (in steps) to update the model parameters.')
-    saving_period: int = Field(1000, ge=1, description='Period (in steps) to save the model parameters. (Should be multiple of update_period).')
+    lfresh_period: int = Field(100, ge=1, description='Period (in steps) to refresh the learning rate.')
+    saving_period: int = Field(1000, ge=1, description='Period (in steps) to save the model parameters..')
 
     train_batch_size: int = Field(32, ge=1, description='Batch size for training.')
     valid_batch_size: int = Field(32, ge=1, description='Batch size for validation.')
@@ -108,7 +112,8 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
-        on_update_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
+        on_update_fn: Callable[[], None] = no_operation,
+        on_lfresh_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
         """
@@ -147,6 +152,14 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         start_from_epoch: int = 0
         start_from_step: int = 0
         start_from_itr: int = 0
+
+        if self.options.device_type == 'GPU' and not torch.cuda.is_available():
+            logger.warning('GPU requested but CUDA is not available. Falling back to CPU training.')
+            self.options.device_type = 'CPU'
+        if self.options.device_type == 'CPU' and self.options.distributed:
+            logger.warning('Distributed training is not supported on CPU. Falling back to single-process training.')
+            self.options.distributed = False
+
         if self.options.resume_filepath is None:
             logger.info(f'-> Train from scratch.')
         else:
@@ -210,6 +223,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 on_epoch_begin_fn,
                 on_epoch_end_fn,
                 on_update_fn,
+                on_lfresh_fn,
                 dataloader_type,
             ), nprocs=node_number, join=True)
         else:
@@ -224,6 +238,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 on_epoch_begin_fn,
                 on_epoch_end_fn,
                 on_update_fn,
+                on_lfresh_fn,
                 dataloader_type,
             )
         toc = time.time()
@@ -242,15 +257,20 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
-        on_update_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
+        on_update_fn: Callable[[], None] = no_operation,
+        on_lfresh_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
 
         make_reproducible(self.options.seed)
         torch.autograd.set_detect_anomaly(True)
 
-        device_descriptor = get_device_descriptor('GPU', rank)
-        torch.cuda.set_device(rank)
+        device_descriptor = get_device_descriptor(self.options.device_type, rank)
+        if self.options.device_type == 'GPU':
+            torch.cuda.set_device(rank)
+        if self.options.device_type == 'CPU':
+            logger.error('Distributed training on CPU is not supported.')
+            raise RuntimeError('Distributed training on CPU is not supported.')
         model.to(device=device_descriptor)
         move_optimizer_to_device(optimizer, device_descriptor)
         logger.info(f'-> Process {rank} Use Device \'{device_descriptor}\'')
@@ -325,9 +345,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 if itr % self.options.report_period == 0:
                     self.log(epoch, step, itr, metrics, 'train')
 
-                # Validate and Update Model Parameters & Adjust Scheduler
-                logger.info(f'-> Updating parameters ...')
-                if itr % self.options.update_period == 0:
+                if itr % self.options.saving_period == 0:
                     logger.info(f'-> Validating ...')
                     model.eval()
                     stic = time.time()
@@ -337,11 +355,27 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                     self.log(epoch, step, itr, metrics, 'valid')
                     model.train()
                     logger.info(f'   Time Cost: {stoc-stic:.2f}s')
+                else:
+                    metrics = None
 
-                    # Callback while parameter update with validation metrics
-                    # User can adjust scheduler here based on metrics
-                    on_update_fn(metrics)
+                # Validate and Update Model Parameters & Adjust Scheduler
+                # If one wants to adjust scheduler based on validation metrics,
+                # validation should be done before learning rate update.
+                # The settings of `self.options.saving_period` and `self.options.lfresh_period`
+                # will affect the frequency of validation and learning rate update.
+                # Thus it is recommended to set `self.options.lfresh_period` as
+                # multiple of `self.options.saving_period`.
+                logger.info(f'-> Updating parameters ...')
+                if itr % self.options.update_period == 0:
+                    # User can update parameters here
+                    on_update_fn()
                 logger.info(f'   Parameters updated.')
+
+                logger.info(f'-> Updating Learning Rate ...')
+                if itr % self.options.lfresh_period == 0:
+                    # User can update learning rate here based on validation metrics
+                    on_lfresh_fn(metrics)
+                logger.info(f'   Learning Rate updated.')
 
                 # Save Model
                 # self.options.saving_period should be multiple of self.options.update_period
@@ -396,14 +430,15 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         on_step_end_fn: Callable[[int], None] = no_operation,
         on_epoch_begin_fn: Callable[[int], None] = no_operation,
         on_epoch_end_fn: Callable[[int], None] = no_operation,
-        on_update_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
+        on_update_fn: Callable[[], None] = no_operation,
+        on_lfresh_fn: Callable[[tuple[list[str], list[torch.Tensor | float], list[Callable[[float], str]]]], None] = no_operation,
         dataloader_type: Literal['pth', 'pyg'] = 'pth',
     ) -> None:
 
         make_reproducible(self.options.seed)
         torch.autograd.set_detect_anomaly(True)
 
-        device_descriptor = get_device_descriptor('GPU', 0)
+        device_descriptor = get_device_descriptor(self.options.device_type, 0)
         model.to(device=device_descriptor)
         move_optimizer_to_device(optimizer, device_descriptor)
         logger.info(f'-> Using Device: \'{device_descriptor}\'')
@@ -417,7 +452,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
         if dataloader_type == 'pyg':
             from torch_geometric.loader import DataLoader
 
-        train_dataloader = DataLoader(train_dataset, batch_size=self.options.train_batch_size, sampler=train_sampler, pin_memory=True, persistent_workers=True, num_workers=self.options.worker_number)
+        train_dataloader = DataLoader(train_dataset, batch_size=self.options.train_batch_size, sampler=train_sampler, pin_memory=True if self.options.device_type == 'GPU' else False, persistent_workers=True, num_workers=self.options.worker_number)
         valid_dataloader = DataLoader(valid_dataset, batch_size=self.options.valid_batch_size, shuffle=False)
 
         early_stop = False
@@ -464,8 +499,7 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 if itr % self.options.report_period == 0:
                     self.log(epoch, step, itr, metrics, 'train')
 
-                # Validate and Update Model Parameters & Adjust Scheduler
-                if itr % self.options.update_period == 0:
+                if itr % self.options.saving_period == 0:
                     logger.info(f'-> Validating ...')
                     model.eval()
                     stic = time.time()
@@ -475,12 +509,27 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                     self.log(epoch, step, itr, metrics, 'valid')
                     model.train()
                     logger.info(f'   Time Cost: {stoc-stic:.2f}s')
+                else:
+                    metrics = None
 
-                    logger.info(f'-> Updating parameters ...')
-                    # Callback before parameter update with validation metrics
-                    # User can adjust scheduler here based on metrics
-                    on_update_fn(metrics)
-                    logger.info(f'   Parameters updated.')
+                # Validate and Update Model Parameters & Adjust Scheduler
+                # If one wants to adjust scheduler based on validation metrics,
+                # validation should be done before learning rate update.
+                # The settings of `self.options.saving_period` and `self.options.lfresh_period`
+                # will affect the frequency of validation and learning rate update.
+                # Thus it is recommended to set `self.options.lfresh_period` as
+                # multiple of `self.options.saving_period`.
+                logger.info(f'-> Updating parameters ...')
+                if itr % self.options.update_period == 0:
+                    # User can update parameters here
+                    on_update_fn()
+                logger.info(f'   Parameters updated.')
+
+                logger.info(f'-> Updating Learning Rate ...')
+                if itr % self.options.lfresh_period == 0:
+                    # User can update learning rate here based on validation metrics
+                    on_lfresh_fn(metrics)
+                logger.info(f'   Learning Rate updated.')
 
                 # Save Model
                 # self.options.saving_period should be multiple of self.options.update_period

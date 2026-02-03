@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 21:55:51
+# Last Modified time: 2026-02-03 16:34:03
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -48,7 +48,7 @@ class StandardEvaluator(BaseEngine[StandardEvaluatorOptions]):
     def log(self, metric_names: list[str], metric_values: list[torch.Tensor], metric_formats: list[Callable[[float], str]]) -> None:
         logs = list()
         for metric_name, metric_value, metric_format in zip(metric_names, metric_values, metric_formats):
-            logs.append(f'[{metric_name}]={metric_format(float(metric_value / self.options.node_number))}')
+            logs.append(f'[{metric_name}]={metric_format(float(metric_value))}')
         logger.info(f'Evaluation Results - {" ".join(logs)}')
 
     def run(
@@ -73,6 +73,12 @@ class StandardEvaluator(BaseEngine[StandardEvaluatorOptions]):
         :param dataloader_type: The type of dataloader to use ('pth' for PyTorch, 'pyg' for PyTorch Geometric).
         :type dataloader_type: Literal[&#39pth&#39, &#39pyg&#39]
         """
+
+        if self.options.device_type == 'GPU' and not torch.cuda.is_available():
+            logger.warning('GPU requested but CUDA is not available. Falling back to CPU training.')
+            self.options.device_type = 'CPU'
+        if self.options.device_type == 'CPU':
+            logger.info('Using CPU for evaluation.')
 
         checkpoint = load_checkpoint(self.options.checkpoint_filepath)
 

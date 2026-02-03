@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2025-12-30 04:25:20
+# Last Modified time: 2026-02-03 14:50:57
 # Copyright (c) 2025 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -133,6 +133,9 @@ def save_checkpoint(checkpoint: Checkpoint, save_path: pathlib.Path, basename: s
         checkpoint_filename = f'{basename}_Itr_{checkpoint.itr}.cp'
         checkpoint_filepath = save_path.joinpath(checkpoint_filename)
         torch.save(Checkpoint.save_dict(checkpoint), checkpoint_filepath)
+
+        latest_checkpoint_filepath = save_path.joinpath(f'{basename}_latest.cp')
+        torch.save(Checkpoint.save_dict(checkpoint), latest_checkpoint_filepath)
 
         checkpoint_filepaths = retrieve_checkpoint_filepaths(save_path, basename)
         itrs = sorted(list(checkpoint_filepaths.keys()), reverse=True)

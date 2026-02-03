@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-01-21 21:56:45
+# Last Modified time: 2026-02-03 16:36:10
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -74,6 +74,12 @@ class StandardPredictor(BaseEngine[StandardPredictorOptions]):
         predict_cli_fn: Callable[[str], str] | None = None,
         initialize_fn: Callable[[torch.nn.Module], None] = no_operation,
     ) -> None:
+        if self.options.device_type == 'GPU' and not torch.cuda.is_available():
+            logger.warning('GPU requested but CUDA is not available. Falling back to CPU training.')
+            self.options.device_type = 'CPU'
+        if self.options.device_type == 'CPU':
+            logger.info('Using CPU for evaluation.')
+
         checkpoint = load_checkpoint(self.options.checkpoint_filepath)
 
         device_descriptor = get_device_descriptor(self.options.device_type, 0)
