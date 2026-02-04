@@ -11,7 +11,7 @@ name = "Younger-Apps-DL"
 description = "Deep Learning Application Module of the Younger Project."
 version = "0.0.1a1"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = {text = "Apache Software License"}
 keywords = ["Younger", "Application", "Deep Learning", "Artificial Intelligence"]
 authors = [{name = "Jason-Young-AI", email = "AI.Jason.Young@outlook.com"}]
