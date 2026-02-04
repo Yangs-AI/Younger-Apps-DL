@@ -49,6 +49,7 @@ dependencies = [
 
 [project.optional-dependencies]
 develop = [
+    "pytest",
     "sphinx",
     "python-semantic-release"
 ]
