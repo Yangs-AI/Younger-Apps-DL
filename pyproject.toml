@@ -9,7 +9,7 @@ exclude = ["tests*", "third_parties*"]
 [project]
 name = "Younger-Apps-DL"
 description = "Deep Learning Application Module of the Younger Project."
-version = "0.0.1alpha1"
+version = "0.0.1a1"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache Software License"}
@@ -44,12 +44,13 @@ dependencies = [
     "scikit-learn",
     "torch-geometric",
     "younger-logics-ir",
-    "python-semantic-release",
+    "younger-logics-core"
 ]
 
 [project.optional-dependencies]
-developer = [
-    "sphinx"
+develop = [
+    "sphinx",
+    "python-semantic-release"
 ]
 
 [project.urls]
