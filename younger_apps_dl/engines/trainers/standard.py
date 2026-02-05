@@ -6,7 +6,7 @@
 # Author: Jason Young (杨郑鑫).
 # E-Mail: AI.Jason.Young@outlook.com
 # Last Modified by: Jason Young (杨郑鑫)
-# Last Modified time: 2026-02-03 16:25:56
+# Last Modified time: 2026-02-05 16:36:36
 # Copyright (c) 2024 Yangs.AI
 # 
 # This source code is licensed under the Apache License 2.0 found in the
@@ -365,17 +365,17 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 # will affect the frequency of validation and learning rate update.
                 # Thus it is recommended to set `self.options.lfresh_period` as
                 # multiple of `self.options.saving_period`.
-                logger.info(f'-> Updating parameters ...')
+                # logger.info(f'-> Updating parameters ...') # Comment out to reduce log affords
                 if itr % self.options.update_period == 0:
                     # User can update parameters here
                     on_update_fn()
-                logger.info(f'   Parameters updated.')
+                # logger.info(f'   Parameters updated.')
 
-                logger.info(f'-> Updating Learning Rate ...')
+                # logger.info(f'-> Updating Learning Rate ...') # Comment out to reduce log affords
                 if itr % self.options.lfresh_period == 0:
                     # User can update learning rate here based on validation metrics
                     on_lfresh_fn(metrics)
-                logger.info(f'   Learning Rate updated.')
+                # logger.info(f'   Learning Rate updated.')
 
                 # Save Model
                 # self.options.saving_period should be multiple of self.options.update_period
@@ -519,17 +519,17 @@ class StandardTrainer(BaseEngine[StandardTrainerOptions]):
                 # will affect the frequency of validation and learning rate update.
                 # Thus it is recommended to set `self.options.lfresh_period` as
                 # multiple of `self.options.saving_period`.
-                logger.info(f'-> Updating parameters ...')
+                # logger.info(f'-> Updating parameters ...') # Comment out to reduce log affords
                 if itr % self.options.update_period == 0:
                     # User can update parameters here
                     on_update_fn()
-                logger.info(f'   Parameters updated.')
+                # logger.info(f'   Parameters updated.') # Comment out to reduce log affords
 
-                logger.info(f'-> Updating Learning Rate ...')
+                # logger.info(f'-> Updating Learning Rate ...') # Comment out to reduce log affords
                 if itr % self.options.lfresh_period == 0:
                     # User can update learning rate here based on validation metrics
                     on_lfresh_fn(metrics)
-                logger.info(f'   Learning Rate updated.')
+                # logger.info(f'   Learning Rate updated.') # Comment out to reduce log affords
 
                 # Save Model
                 # self.options.saving_period should be multiple of self.options.update_period
