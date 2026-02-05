@@ -43,8 +43,7 @@ dependencies = [
     "networkx",
     "scikit-learn",
     "torch-geometric",
-    "younger-logics-ir",
-    "younger-logics-core"
+    "younger-logics-ir"
 ]
 
 [project.optional-dependencies]
