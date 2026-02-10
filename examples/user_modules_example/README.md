@@ -24,18 +24,18 @@ user_modules_example/
 # Set environment variable
 export YADL_OPTIONAL_DIRPATH=/home/jason/Development/Younger/younger/apps/dl/examples/user_modules_example/user_modules
 
-# 查看注册的组件
+# Inspect registered components
 younger-apps-dl glance --some-type models
 younger-apps-dl glance --some-type tasks
 
-# 生成配置文件
+# Generate a config file
 younger-apps-dl option \
     --task-kind optional \
     --task-name simple_demo \
     --task-step train \
     --toml-path demo_config.toml
 
-# 运行任务
+# Run the task
 younger-apps-dl launch \
     --task-kind optional \
     --task-name simple_demo \

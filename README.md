@@ -42,6 +42,20 @@ git commit -m "feat: my change"
 git push origin feat/my-change
 ```
 
+### Fixing edits made on a detached HEAD
+If you forgot to switch branches and edited files on a `Previous HEAD position`, stash the changes, switch to the target branch, then restore them:
+
+```bash
+# 1) Stash the current changes
+git stash push -m "temp: bench local edits"
+
+# 2) Switch to dev
+git checkout dev
+
+# 3) Restore the changes
+git stash pop
+```
+
 ### Local development
 From this repo root:
 
