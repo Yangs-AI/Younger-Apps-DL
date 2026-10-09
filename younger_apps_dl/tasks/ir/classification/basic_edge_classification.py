@@ -62,7 +62,7 @@ class DatasetOptions(BaseModel):
     worker_number: int = Field(4, description='Number of workers for parallel data loading or processing.')
 
 
-class BasicNodeClassificationOptions(BaseModel):
+class BasicEdgeClassificationOptions(BaseModel):
     # Main Options
     mask_ratio: float = Field(..., description='Ratio of edges to mask for self-supervised learning (0.0 to 1.0). (1 - mask_ratio) * num_edge edges are kept as prior knowledge.')
     sample_ratio: float = Field(..., description='Ratio of positive and negative samples to generate for the masked edges (0.0 to 1.0). 2 * sample_ratio * mask_ratio * num_edge edges are generated as samples.')
@@ -84,8 +84,8 @@ class BasicNodeClassificationOptions(BaseModel):
 
 
 @register_task('ir', 'basic_edge_classification')
-class BasicEdgeClassification(BaseTask[BasicNodeClassificationOptions]):
-    OPTIONS = BasicNodeClassificationOptions
+class BasicEdgeClassification(BaseTask[BasicEdgeClassificationOptions]):
+    OPTIONS = BasicEdgeClassificationOptions
     STAGE_REQUIRED_OPTION = {
         'preprocess': ['preprocessor'],
         'train': ['train_dataset', 'valid_dataset', 'model', 'optimizer', 'scheduler', 'trainer'],
